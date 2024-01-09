@@ -361,7 +361,7 @@ where
         .await
     }
 
-    pub async fn create_bundle_access_list_with(
+    async fn create_bundle_access_list_with(
         &self,
         calls: Vec<CallRequest>,
         block_id: Option<BlockId>,
