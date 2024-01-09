@@ -363,21 +363,26 @@ where
 
     async fn create_bundle_access_list_with(
         &self,
-        calls: Vec<CallRequest>,
+        mut calls: Vec<CallRequest>,
         block_id: Option<BlockId>,
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
-        let estimate_gas = |env, block, call, state, none| {
-            self.estimate_gas_with(env, block, call, state, none)
+        // Clone the necessary parts of `self` for the closure
+        let self_clone = self.clone();
+
+        // This will capture the cloned `self_clone` instead of `self`
+        let estimate_gas = move |env, block, call, state, none| {
+            self_clone.estimate_gas_with(env, block, call, state, none)
         };
 
+        // Use `spawn_with_state_at_block` with the captured `estimate_gas`
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
 
-            for mut call in calls {
+            for call in calls.iter_mut() {
                 let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
@@ -392,6 +397,7 @@ where
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
+
                 let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
                 ensure_success(res.result);
@@ -399,7 +405,10 @@ where
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-                let gas_used = estimate_gas(env.cfg, env.block, call, db.db.state(), None)?;
+                
+                // Clone `db` state for the immutable borrow
+                let db_clone = db.clone();
+                let gas_used = estimate_gas(env.cfg, env.block, call.clone(), db_clone.db.state(), None)?;
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
             }
