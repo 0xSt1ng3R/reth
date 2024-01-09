@@ -369,7 +369,7 @@ where
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
-        self.spawn_with_state_at_block(at, move |state| {
+        self.spawn_with_state_at_block(at.into(), move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
 
