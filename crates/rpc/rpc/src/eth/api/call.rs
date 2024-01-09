@@ -368,6 +368,7 @@ where
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
+        let this = self.clone();
 
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
@@ -395,7 +396,7 @@ where
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-                let gas_used = self.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+                let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
             }
