@@ -1,6 +1,10 @@
+use self::parity::stack_push_count;
 use crate::tracing::{
-    types::{CallKind, LogCallOrder},
-    utils::get_create_address,
+    arena::PushTraceKind,
+    types::{
+        CallKind, CallTraceNode, LogCallOrder, RecordedMemory, StorageChange, StorageChangeReason,
+    },
+    utils::gas_used,
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 pub use arena::CallTraceArena;
@@ -22,12 +26,6 @@ mod fourbyte;
 mod opcount;
 pub mod types;
 mod utils;
-use self::parity::stack_push_count;
-use crate::tracing::{
-    arena::PushTraceKind,
-    types::{CallTraceNode, RecordedMemory, StorageChange, StorageChangeReason},
-    utils::gas_used,
-};
 pub use builder::{
     geth::{self, GethTraceBuilder},
     parity::{self, ParityTraceBuilder},
@@ -81,6 +79,11 @@ impl TracingInspector {
             gas_inspector: Default::default(),
             spec_id: None,
         }
+    }
+
+    /// Returns the config of the inspector.
+    pub fn config(&self) -> &TracingInspectorConfig {
+        &self.config
     }
 
     /// Gets a reference to the recorded call traces.
@@ -502,7 +505,7 @@ where
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
         self.start_trace_on_call(
             data,
-            get_create_address(inputs, nonce),
+            inputs.created_address(nonce),
             inputs.init_code.clone(),
             inputs.value,
             inputs.scheme.into(),

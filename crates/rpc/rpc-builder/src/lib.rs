@@ -132,8 +132,6 @@
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
     issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
 )]
-#![warn(missing_debug_implementations, missing_docs, unreachable_pub, rustdoc::all)]
-#![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use std::{
@@ -151,7 +149,7 @@ use jsonrpsee::{
     Methods, RpcModule,
 };
 use serde::{Deserialize, Serialize, Serializer};
-use strum::{AsRefStr, EnumVariantNames, ParseError, VariantNames};
+use strum::{AsRefStr, EnumIter, EnumVariantNames, IntoStaticStr, ParseError, VariantNames};
 use tower::layer::util::{Identity, Stack};
 use tower_http::cors::CorsLayer;
 use tracing::{instrument, trace};
@@ -739,7 +737,19 @@ impl fmt::Display for RpcModuleSelection {
 }
 
 /// Represents RPC modules that are supported by reth
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, AsRefStr, EnumVariantNames, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Eq,
+    PartialEq,
+    Hash,
+    AsRefStr,
+    IntoStaticStr,
+    EnumVariantNames,
+    EnumIter,
+    Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum RethRpcModule {
@@ -776,6 +786,18 @@ impl RethRpcModule {
     /// Returns all variants of the enum
     pub const fn all_variants() -> &'static [&'static str] {
         Self::VARIANTS
+    }
+
+    /// Returns all variants of the enum
+    pub fn modules() -> impl IntoIterator<Item = RethRpcModule> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+    }
+
+    /// Returns the string representation of the module.
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        self.into()
     }
 }
 
@@ -1758,11 +1780,11 @@ impl TransportRpcModules {
         &self.config
     }
 
-    /// Merge the given Methods in the configured http methods.
+    /// Merge the given [Methods] in the configured http methods.
     ///
     /// Fails if any of the methods in other is present already.
     ///
-    /// Returns Ok(false) if no http transport is configured.
+    /// Returns [Ok(false)] if no http transport is configured.
     pub fn merge_http(
         &mut self,
         other: impl Into<Methods>,
@@ -1773,11 +1795,11 @@ impl TransportRpcModules {
         Ok(false)
     }
 
-    /// Merge the given Methods in the configured ws methods.
+    /// Merge the given [Methods] in the configured ws methods.
     ///
     /// Fails if any of the methods in other is present already.
     ///
-    /// Returns Ok(false) if no http transport is configured.
+    /// Returns [Ok(false)] if no ws transport is configured.
     pub fn merge_ws(
         &mut self,
         other: impl Into<Methods>,
@@ -1788,11 +1810,11 @@ impl TransportRpcModules {
         Ok(false)
     }
 
-    /// Merge the given Methods in the configured ipc methods.
+    /// Merge the given [Methods] in the configured ipc methods.
     ///
     /// Fails if any of the methods in other is present already.
     ///
-    /// Returns Ok(false) if no ipc transport is configured.
+    /// Returns [Ok(false)] if no ipc transport is configured.
     pub fn merge_ipc(
         &mut self,
         other: impl Into<Methods>,
@@ -1803,7 +1825,7 @@ impl TransportRpcModules {
         Ok(false)
     }
 
-    /// Merge the given Methods in all configured methods.
+    /// Merge the given [Methods] in all configured methods.
     ///
     /// Fails if any of the methods in other is present already.
     pub fn merge_configured(
