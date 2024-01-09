@@ -367,44 +367,42 @@ where
         block_id: Option<BlockId>,
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
-        let (cfg, block_env, at) = self.inner.eth_api.evm_env_at(at).await?;
+        let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
-        self.inner
-            .eth_api
-            .spawn_with_state_at_block(at, move |state| {
-                let mut access_lists = Vec::with_capacity(calls.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+        self.spawn_with_state_at_block(at, move |state| {
+            let mut access_lists = Vec::with_capacity(calls.len());
+            let mut db = CacheDB::new(StateProviderDatabase::new(state));
 
-                for mut call in calls {
-                    let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
-                    env.cfg.disable_block_gas_limit = true;
-                    env.cfg.disable_base_fee = true;
+            for mut call in calls {
+                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                env.cfg.disable_block_gas_limit = true;
+                env.cfg.disable_base_fee = true;
 
-                    if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
-                        cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
-                    }
-
-                    let from = call.from.unwrap_or_default();
-                    let to = call.to.unwrap_or(from.create(db.basic_ref(from)?.unwrap_or_default().nonce));
-                    let initial = call.access_list.take().unwrap_or_default();
-
-                    let precompiles = get_precompiles(env.cfg.spec_id);
-                    let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                    let (result, env) = inspect(&mut db, env, &mut inspector)?;
-
-                    result.result.ensure_success()?;
-                    db.commit(result.state)?;
-
-                    let access_list = inspector.into_access_list();
-                    call.access_list = Some(access_list.clone());
-                    let gas_used = self.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
-
-                    access_lists.push(AccessListWithGasUsed { access_list, gas_used });
+                if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
+                    cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
                 }
 
-                Ok(access_lists)
-            })
-            .await
+                let from = call.from.unwrap_or_default();
+                let to = call.to.unwrap_or(from.create(db.basic_ref(from)?.unwrap_or_default().nonce));
+                let initial = call.access_list.take().unwrap_or_default();
+
+                let precompiles = get_precompiles(env.cfg.spec_id);
+                let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
+                let (result, env) = inspect(&mut db, env, &mut inspector)?;
+
+                result.result.ensure_success()?;
+                db.commit(result.state)?;
+
+                let access_list = inspector.into_access_list();
+                call.access_list = Some(access_list.clone());
+                let gas_used = self.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+
+                access_lists.push(AccessListWithGasUsed { access_list, gas_used });
+            }
+
+            Ok(access_lists)
+        })
+        .await
     }
 
     /// Creates the AccessList for the `request` at the [BlockId] or latest.
