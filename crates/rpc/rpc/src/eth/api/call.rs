@@ -369,6 +369,10 @@ where
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
+        let estimate_gas = |env, block, call, state, none| {
+            self.estimate_gas_with(env, block, call, state, none)
+        };
+
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
@@ -388,14 +392,14 @@ where
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                let (result, env) = inspect(&mut db, env, &mut inspector)?;
+                let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
-                ensure_success(result.result);
-                db.commit(result.state);
+                ensure_success(res.result);
+                db.commit(res.state);
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-                let gas_used = self.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+                let gas_used = estimate_gas(env.cfg, env.block, call, db.db.state(), None)?;
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
             }
