@@ -369,6 +369,10 @@ where
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
+        // Extract necessary methods and data from `self` before the closure
+        let evm_env_at = self.evm_env_at.clone(); // Replace with actual method or data you need
+        let estimate_gas_with = self.estimate_gas_with.clone(); // Replace with actual method or data you need
+
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
@@ -400,10 +404,8 @@ where
                 // Temporarily extract db's state for estimate_gas_with
                 let db_state = db.db.state();
 
-                let gas_used = self.estimate_gas_with(env.cfg, env.block, call, db_state, None)?;
-
-                // Reassign db's state if necessary
-                // db.set_state(db_state);
+                // Use the extracted method `estimate_gas_with` here
+                let gas_used = estimate_gas_with(env.cfg, env.block, call, db_state, None)?;
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
             }
