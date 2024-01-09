@@ -350,23 +350,23 @@ where
     }
 
     /// Creates the AccessList for the `calls` bundle vector at the [BlockId] or latest.
-    // pub(crate) async fn create_bundle_access_list_at(
-    //     &self,
-    //     calls: Vec<CallRequest>,
-    //     block_number: Option<BlockId>,
-    // ) -> EthResult<Vec<AccessListWithGasUsed>> {
-    //     self.on_blocking_task(|this| async move {
-    //         this.create_bundle_access_list_with(calls, block_number).await
-    //     })
-    //     .await
-    // }
-
     pub(crate) async fn create_bundle_access_list_at(
         &self,
         calls: Vec<CallRequest>,
         block_number: Option<BlockId>,
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
-        let at = block_number.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
+        self.on_blocking_task(|this| async move {
+            this.create_bundle_access_list_with(calls, block_number).await
+        })
+        .await
+    }
+
+    async fn create_bundle_access_list_with(
+        &self,
+        calls: Vec<CallRequest>,
+        block_id: Option<BlockId>,
+    ) -> EthResult<Vec<AccessListWithGasUsed>> {
+        let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
 
         self.spawn_with_state_at_block(at, move |state| {
