@@ -389,10 +389,10 @@ where
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                let (result, env) = inspect(&mut db, env, &mut inspector)?;
+                let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
-                ensure_success(result.result);
-                db.commit(result.state);
+                let _ = ensure_success(result.result);
+                db.commit(res.state);
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
