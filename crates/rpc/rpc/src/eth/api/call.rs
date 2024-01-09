@@ -391,7 +391,7 @@ where
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
                 let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
-                let _ = ensure_success(result.result);
+                let _ = ensure_success(res.result);
                 db.commit(res.state);
 
                 let access_list = inspector.into_access_list();
