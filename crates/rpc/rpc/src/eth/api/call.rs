@@ -402,7 +402,7 @@ where
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
 
-                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
+                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 _env.cfg.disable_block_gas_limit = true;
                 _env.cfg.disable_base_fee = true;
                 let (res0, _) = transact(&mut db, _env)?;
