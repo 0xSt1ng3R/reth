@@ -375,23 +375,24 @@ where
             let mut calls = calls.into_iter().peekable();
 
             while let Some(call) = calls.next() {
-                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
+                let mut call_tx = call.clone();
+                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call_tx)?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
 
-                if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
+                if call_tx.gas.is_none() && env.tx.gas_price > U256::ZERO {
                     cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
                 }
 
-                let from = call.from.unwrap_or_default();
-                let to = if let Some(to) = call.to {
+                let from = call_tx.from.unwrap_or_default();
+                let to = if let Some(to) = call_tx.to {
                     to
                 } else {
                     let nonce = db.basic_ref(from)?.unwrap_or_default().nonce;
                     from.create(nonce)
                 };
 
-                let initial = call.access_list.take().unwrap_or_default();
+                let initial = call_tx.access_list.take().unwrap_or_default();
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
@@ -400,9 +401,9 @@ where
                 let _ = ensure_success(res.result);
 
                 let access_list = inspector.into_access_list();
-                call.access_list = Some(access_list.clone());
+                call_tx.access_list = Some(access_list.clone());
 
-                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
+                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call_tx)?;
                 _env.cfg.disable_block_gas_limit = true;
                 _env.cfg.disable_base_fee = true;
                 let (res0, _) = transact(&mut db, _env)?;
