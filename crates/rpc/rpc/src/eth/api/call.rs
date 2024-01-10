@@ -376,7 +376,7 @@ where
             let mut calls = calls.into_iter().peekable();
 
             while let Some(mut call) = calls.next() {
-                let mut env = build_call_evm_env(cfg, block_env, call.clone())?;
+                let mut env = build_call_evm_env(&cfg, &block_env, call.clone())?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
 
