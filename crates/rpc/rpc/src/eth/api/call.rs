@@ -375,7 +375,7 @@ where
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
             let mut calls = calls.into_iter().peekable();
 
-            while let Some(call) = calls.next() {
+            while let Some(mut call) = calls.next() {
                 let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
