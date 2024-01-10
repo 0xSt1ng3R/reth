@@ -399,16 +399,17 @@ where
                 let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
                 let _ = ensure_success(res.result);
+                if calls.peek().is_some() {
+                    db.commit(res.state)
+                }
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
                 let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+                // let gas_used = res.result.gas_used();
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
 
-                if calls.peek().is_some() {
-                    db.commit(res.state)
-                }
             }
 
             Ok(access_lists)
