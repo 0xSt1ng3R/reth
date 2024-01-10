@@ -373,8 +373,6 @@ where
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
-
-            // for mut call in calls {
             let mut calls = calls.into_iter().peekable();
 
             while let Some(call) = calls.next() {
@@ -387,7 +385,13 @@ where
                 }
 
                 let from = call.from.unwrap_or_default();
-                let to = call.to.unwrap_or(from.create(db.basic_ref(from)?.unwrap_or_default().nonce));
+                let to = if let Some(to) = call.to {
+                    to
+                } else {
+                    let nonce = db.basic_ref(from)?.unwrap_or_default().nonce;
+                    from.create(nonce)
+                };
+
                 let initial = call.access_list.take().unwrap_or_default();
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
@@ -398,13 +402,10 @@ where
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-
                 let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
-                // let gas_used = res.result.gas_used();
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
 
-                // db.commit(res.state);
                 if calls.peek().is_some() {
                     db.commit(res.state)
                 }
