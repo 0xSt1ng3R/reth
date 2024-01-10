@@ -377,7 +377,6 @@ where
             let mut calls = calls.into_iter().peekable();
 
             while let Some(mut call) = calls.next() {
-
                 let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
@@ -407,10 +406,14 @@ where
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-                let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
 
-                // let (res0, _) = transact(&mut db, env)?;
-                // let gas_used = res0.result.gas_used();
+                // let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+
+                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
+                _env.cfg.disable_block_gas_limit = true;
+                _env.cfg.disable_base_fee = true;
+                let (res0, _) = transact(&mut db, _env)?;
+                let gas_used = res0.result.gas_used();
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
 
