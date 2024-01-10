@@ -397,7 +397,16 @@ where
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
                 let (res, _) = inspect(&mut db, env, &mut inspector)?;
 
-                let _ = ensure_success(res.result);
+                match res.result {
+                    ExecutionResult::Halt { reason, .. } => Err(match reason {
+                        Halt::NonceOverflow => RpcInvalidTransactionError::NonceMaxValue,
+                        halt => RpcInvalidTransactionError::EvmHalt(halt),
+                    }),
+                    ExecutionResult::Revert { output, .. } => {
+                        Err(RpcInvalidTransactionError::Revert(RevertError::new(output)))
+                    }
+                    ExecutionResult::Success { .. } => Ok(()),
+                }?;
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
