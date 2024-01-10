@@ -374,7 +374,8 @@ where
             let mut access_lists = Vec::with_capacity(calls.len());
             let mut db = CacheDB::new(StateProviderDatabase::new(state));
 
-            for mut call in calls {
+            // for mut call in calls {
+            while let Some(call) = calls.next() {
                 let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
@@ -392,13 +393,19 @@ where
                 let (res, env) = inspect(&mut db, env, &mut inspector)?;
 
                 let _ = ensure_success(res.result);
-                db.commit(res.state);
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
+
                 let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+                // let gas_used = res.result.gas_used();
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
+
+                // db.commit(res.state);
+                if calls.peek().is_some() {
+                    db.commit(res.state)
+                }
             }
 
             Ok(access_lists)
