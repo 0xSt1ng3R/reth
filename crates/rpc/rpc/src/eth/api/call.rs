@@ -415,7 +415,7 @@ where
                 let (res0, _) = transact(&mut db, _env)?;
                 let gas_used = res0.result.gas_used();
 
-                access_lists.push(AccessListWithGasUsed { access_list, gas_used });
+                access_lists.push(AccessListWithGasUsed { access_list, gas_used.into() });
 
             }
 
