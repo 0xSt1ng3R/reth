@@ -368,7 +368,6 @@ where
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
-        // let this = self.clone();
 
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
@@ -399,25 +398,21 @@ where
                 let (res, _) = inspect(&mut db, env, &mut inspector)?;
 
                 let _ = ensure_success(res.result);
-                if calls.peek().is_some() {
-                    db.commit(res.state)
-                }
 
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
-
-                // let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
 
                 let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
                 _env.cfg.disable_block_gas_limit = true;
                 _env.cfg.disable_base_fee = true;
                 let (res0, _) = transact(&mut db, _env)?;
-
-                // let gas_used = res0.result.gas_used().try_into().unwrap_or(U256::ZERO0);
                 let gas_used = U256::from(res0.result.gas_used());
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
-
+                
+                if calls.peek().is_some() {
+                    db.commit(res.state)
+                }
             }
 
             Ok(access_lists)
