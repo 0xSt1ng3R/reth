@@ -394,13 +394,11 @@ where
                 let _ = ensure_success(res.result);
                 db.commit(res.state);
 
-                let gas_used_without_access_list = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
-
                 let access_list = inspector.into_access_list();
-                call.access_list = Some(access_list.clone());
-                let gas_used_with_access_list = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
+                // call.access_list = Some(access_list.clone());
+                let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
 
-                access_lists.push(AccessListWithGasUsed { access_list, gas_used_with_access_list, gas_used_without_access_list });
+                access_lists.push(AccessListWithGasUsed { access_list, gas_used });
             }
 
             Ok(access_lists)
