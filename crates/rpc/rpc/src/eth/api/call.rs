@@ -368,6 +368,7 @@ where
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
+        let gas_limit = self.inner.gas_cap;
         let this = self.clone();
 
         self.spawn_with_state_at_block(at, move |state| {
@@ -376,9 +377,19 @@ where
             let mut calls = calls.into_iter().peekable();
 
             while let Some(mut call) = calls.next() {
-                let mut env = build_call_evm_env(&cfg, &block_env, call.clone())?;
-                env.cfg.disable_block_gas_limit = true;
-                env.cfg.disable_base_fee = true;
+
+                // let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                // env.cfg.disable_block_gas_limit = true;
+                // env.cfg.disable_base_fee = true;
+
+                let env = prepare_call_env(
+                    cfg.clone(),
+                    block_env.clone(),
+                    call,
+                    gas_limit,
+                    &mut db,
+                    None,
+                )?;
 
                 if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
                     cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
@@ -406,7 +417,9 @@ where
                 let access_list = inspector.into_access_list();
                 call.access_list = Some(access_list.clone());
                 let gas_used = this.estimate_gas_with(env.cfg, env.block, call, db.db.state(), None)?;
-                // let gas_used = res.result.gas_used();
+
+                // let (res0, _) = transact(&mut db, env)?;
+                // let gas_used = res0.result.gas_used();
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
 
