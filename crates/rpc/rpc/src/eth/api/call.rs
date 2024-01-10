@@ -375,7 +375,7 @@ where
             let mut calls = calls.into_iter().peekable();
 
             while let Some(mut call) = calls.next() {
-                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call)?;
                 env.cfg.disable_block_gas_limit = true;
                 env.cfg.disable_base_fee = true;
 
@@ -409,7 +409,7 @@ where
                 let gas_used = U256::from(res0.result.gas_used());
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
-                
+
                 if calls.peek().is_some() {
                     db.commit(res.state)
                 }
