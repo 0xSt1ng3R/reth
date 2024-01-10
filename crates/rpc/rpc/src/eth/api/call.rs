@@ -368,8 +368,7 @@ where
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
-        let gas_limit = self.inner.gas_cap;
-        let this = self.clone();
+        // let this = self.clone();
 
         self.spawn_with_state_at_block(at, move |state| {
             let mut access_lists = Vec::with_capacity(calls.len());
@@ -397,7 +396,7 @@ where
 
                 let precompiles = get_precompiles(env.cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                let (res, env) = inspect(&mut db, env, &mut inspector)?;
+                let (res, _) = inspect(&mut db, env, &mut inspector)?;
 
                 let _ = ensure_success(res.result);
                 if calls.peek().is_some() {
