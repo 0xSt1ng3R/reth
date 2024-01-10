@@ -388,7 +388,7 @@ where
                     call,
                     gas_limit,
                     &mut db,
-                    EvmOverrides::new(),
+                    EvmOverrides,
                 )?;
 
                 if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
