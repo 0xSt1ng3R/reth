@@ -378,18 +378,9 @@ where
 
             while let Some(mut call) = calls.next() {
 
-                // let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
-                // env.cfg.disable_block_gas_limit = true;
-                // env.cfg.disable_base_fee = true;
-
-                let env = prepare_call_env(
-                    cfg.clone(),
-                    block_env.clone(),
-                    call,
-                    gas_limit,
-                    &mut db,
-                    EvmOverrides,
-                )?;
+                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                env.cfg.disable_block_gas_limit = true;
+                env.cfg.disable_base_fee = true;
 
                 if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
                     cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
