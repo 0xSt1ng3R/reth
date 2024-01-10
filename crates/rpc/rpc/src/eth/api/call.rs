@@ -413,9 +413,9 @@ where
                 _env.cfg.disable_block_gas_limit = true;
                 _env.cfg.disable_base_fee = true;
                 let (res0, _) = transact(&mut db, _env)?;
-                let gas_used = res0.result.gas_used();
+                let gas_used = res0.result.gas_used().try_into().unwrap_or(u64::MAX);
 
-                access_lists.push(AccessListWithGasUsed { access_list, gas_used.into() });
+                access_lists.push(AccessListWithGasUsed { access_list, gas_used });
 
             }
 
