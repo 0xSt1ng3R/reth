@@ -489,7 +489,7 @@ where
         bundles: Vec<Bundle>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
-    ) -> EthResult<Vec<AccessList>> {
+    ) -> EthResult<Vec<Vec<AccessList>>> {
         if bundles.is_empty() {
             return Err(EthApiError::InvalidParams(String::from("bundles are empty.")))
         }
