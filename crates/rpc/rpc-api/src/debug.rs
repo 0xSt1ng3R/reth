@@ -1,11 +1,11 @@
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256};
+use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, AccessList};
 use reth_rpc_types::{
     trace::geth::{
         BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
         TraceResult,
     },
-    Bundle, CallRequest, RichBlock, StateContext, AccessListWithGasUsed, 
+    Bundle, CallRequest, RichBlock, StateContext, 
 };
 
 /// Debug rpc interface.
@@ -136,7 +136,7 @@ pub trait DebugApi {
         bundles: Vec<Bundle>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
-    ) -> RpcResult<Vec<Vec<AccessListWithGasUsed>>>;
+    ) -> RpcResult<Vec<Vec<AccessList>>>;
 
     /// Sets the logging backtrace location. When a backtrace location is set and a log message is
     /// emitted at that location,  the stack of the goroutine executing the log statement will

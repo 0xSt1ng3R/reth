@@ -19,7 +19,7 @@ use reth_primitives::{
         db::{DatabaseCommit, DatabaseRef},
         BlockEnv, CfgEnv,
     },
-    Address, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSignedEcRecovered, B256,
+    Address, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSignedEcRecovered, B256, AccessList, 
 };
 use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderBox, TransactionVariant,
@@ -37,7 +37,7 @@ use reth_rpc_types::{
         BlockTraceResult, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
         GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
     },
-    BlockError, Bundle, CallRequest, RichBlock, StateContext, AccessListWithGasUsed
+    BlockError, Bundle, CallRequest, RichBlock, StateContext, 
 };
 use reth_tasks::TaskSpawner;
 use revm::{
@@ -489,7 +489,7 @@ where
         bundles: Vec<Bundle>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
-    ) -> EthResult<Vec<AccessListWithGasUsed>> {
+    ) -> EthResult<Vec<AccessList>> {
         if bundles.is_empty() {
             return Err(EthApiError::InvalidParams(String::from("bundles are empty.")))
         }
@@ -505,7 +505,7 @@ where
 
         let opts = opts.unwrap_or_default();
         let block = block.ok_or_else(|| EthApiError::UnknownBlockNumber)?;
-        let GethDebugTracingCallOptions { _, mut state_overrides, .. } = opts;
+        let GethDebugTracingCallOptions { .., mut state_overrides, .. } = opts;
         let gas_limit = self.inner.eth_api.call_gas_limit();
 
         // we're essentially replaying the transactions in the block here, hence we need the state
@@ -935,6 +935,16 @@ where
     ) -> RpcResult<Vec<Vec<GethTrace>>> {
         let _permit = self.acquire_trace_permit().await;
         Ok(DebugApi::debug_trace_call_many(self, bundles, state_context, opts).await?)
+    }
+
+    async fn create_bundle_access_list(
+        &self,
+        bundles: Vec<Bundle>,
+        state_context: Option<StateContext>,
+        opts: Option<GethDebugTracingCallOptions>,
+    ) -> RpcResult<Vec<Vec<AccessList>>> {
+        let _permit = self.acquire_trace_permit().await;
+        Ok(DebugApi::create_bundle_access_list(self, bundles, state_context, opts).await?)
     }
 
     async fn debug_backtrace_at(&self, _location: &str) -> RpcResult<()> {
