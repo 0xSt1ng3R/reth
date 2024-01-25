@@ -1,11 +1,11 @@
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, AccessList};
+use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256};
 use reth_rpc_types::{
     trace::geth::{
         BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
         TraceResult,
     },
-    Bundle, CallRequest, RichBlock, StateContext, 
+    Bundle, CallRequest, RichBlock, StateContext, AccessList
 };
 
 /// Debug rpc interface.

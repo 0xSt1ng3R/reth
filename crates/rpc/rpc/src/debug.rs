@@ -19,7 +19,7 @@ use reth_primitives::{
         db::{DatabaseCommit, DatabaseRef},
         BlockEnv, CfgEnv,
     },
-    Address, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSignedEcRecovered, B256, AccessList, 
+    Address, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSignedEcRecovered, B256,
 };
 use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderBox, TransactionVariant,
@@ -37,7 +37,7 @@ use reth_rpc_types::{
         BlockTraceResult, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
         GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
     },
-    BlockError, Bundle, CallRequest, RichBlock, StateContext, 
+    BlockError, Bundle, CallRequest, RichBlock, StateContext, AccessList,
 };
 use reth_tasks::TaskSpawner;
 use revm::{
@@ -505,7 +505,7 @@ where
 
         let opts = opts.unwrap_or_default();
         let block = block.ok_or_else(|| EthApiError::UnknownBlockNumber)?;
-        let GethDebugTracingCallOptions { .., mut state_overrides, .. } = opts;
+        let GethDebugTracingCallOptions { tracing_options, mut state_overrides, .. } = opts;
         let gas_limit = self.inner.eth_api.call_gas_limit();
 
         // we're essentially replaying the transactions in the block here, hence we need the state
