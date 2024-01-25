@@ -551,7 +551,7 @@ where
                     let block_overrides = block_override.map(Box::new);
 
                     let mut transactions = transactions.into_iter().peekable();
-                    while let Some(tx) = transactions.next() {
+                    while let Some(mut tx) = transactions.next() {
                         // apply state overrides only once, before the first transaction
                         let state_overrides = state_overrides.take();
                         let overrides = EvmOverrides::new(state_overrides, block_overrides.clone());
