@@ -5,7 +5,7 @@ use reth_rpc_types::{
         BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
         TraceResult,
     },
-    Bundle, CallRequest, RichBlock, StateContext,
+    Bundle, CallRequest, RichBlock, StateContext, AccessListWithGasUsed, 
 };
 
 /// Debug rpc interface.
@@ -129,6 +129,14 @@ pub trait DebugApi {
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> RpcResult<Vec<Vec<GethTrace>>>;
+
+    #[method(name = "createBundleAccessList")]
+    async fn create_bundle_access_list(
+        &self,
+        bundles: Vec<Bundle>,
+        state_context: Option<StateContext>,
+        opts: Option<GethDebugTracingCallOptions>,
+    ) -> RpcResult<Vec<Vec<AccessListWithGasUsed>>>;
 
     /// Sets the logging backtrace location. When a backtrace location is set and a log message is
     /// emitted at that location,  the stack of the goroutine executing the log statement will
