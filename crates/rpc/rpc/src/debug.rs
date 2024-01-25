@@ -559,7 +559,7 @@ where
                         let env = prepare_call_env(
                             cfg.clone(),
                             block_env.clone(),
-                            tx,
+                            tx.clone(),
                             gas_limit,
                             &mut db,
                             overrides,
