@@ -43,6 +43,8 @@ use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use crate::eth::revm_utils::get_precompiles;
 use reth_revm::{access_list::AccessListInspector};
 
+use revm::DatabaseRef;
+
 /// `debug` API implementation.
 ///
 /// This type provides the functionality for handling `debug` related requests.
