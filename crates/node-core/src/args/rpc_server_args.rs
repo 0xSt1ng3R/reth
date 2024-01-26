@@ -17,8 +17,9 @@ use clap::{
     Arg, Args, Command,
 };
 use futures::TryFutureExt;
+use rand::Rng;
 use reth_network_api::{NetworkInfo, Peers};
-use reth_node_api::EngineTypes;
+use reth_node_api::{EngineTypes, EvmEnvConfig};
 use reth_provider::{
     AccountReader, BlockReaderIdExt, CanonStateSubscriptions, ChainSpecProvider, ChangeSetReader,
     EvmEnvProvider, HeaderProvider, StateProviderFactory,
@@ -220,6 +221,49 @@ impl RpcServerArgs {
         self.ipcpath = format!("{}-{}", self.ipcpath, instance);
     }
 
+    /// Set the http port to zero, to allow the OS to assign a random unused port when the rpc
+    /// server binds to a socket.
+    pub fn with_http_unused_port(mut self) -> Self {
+        self.http_port = 0;
+        self
+    }
+
+    /// Set the ws port to zero, to allow the OS to assign a random unused port when the rpc
+    /// server binds to a socket.
+    pub fn with_ws_unused_port(mut self) -> Self {
+        self.ws_port = 0;
+        self
+    }
+
+    /// Set the auth port to zero, to allow the OS to assign a random unused port when the rpc
+    /// server binds to a socket.
+    pub fn with_auth_unused_port(mut self) -> Self {
+        self.auth_port = 0;
+        self
+    }
+
+    /// Append a random string to the ipc path, to prevent possible collisions when multiple nodes
+    /// are being run on the same machine.
+    pub fn with_ipc_random_path(mut self) -> Self {
+        let random_string: String = rand::thread_rng()
+            .sample_iter(rand::distributions::Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+        self.ipcpath = format!("{}-{}", self.ipcpath, random_string);
+        self
+    }
+
+    /// Configure all ports to be set to a random unused port when bound, and set the IPC path to a
+    /// random path.
+    pub fn with_unused_ports(mut self) -> Self {
+        self = self.with_http_unused_port();
+        self = self.with_ws_unused_port();
+        self = self.with_auth_unused_port();
+        self = self.with_ipc_random_path();
+        self
+    }
+
     /// Configures and launches _all_ servers.
     ///
     /// Returns the handles for the launched regular RPC server(s) (if any) and the server handle
@@ -248,6 +292,7 @@ impl RpcServerArgs {
             .with_network(components.network())
             .with_events(components.events())
             .with_executor(components.task_executor())
+            .with_evm_config(components.evm_config())
             .build_with_auth_server(module_config, engine_api);
 
         let rpc_components = RethRpcComponents {
@@ -294,13 +339,14 @@ impl RpcServerArgs {
     }
 
     /// Convenience function for starting a rpc server with configs which extracted from cli args.
-    pub async fn start_rpc_server<Provider, Pool, Network, Tasks, Events>(
+    pub async fn start_rpc_server<Provider, Pool, Network, Tasks, Events, EvmConfig>(
         &self,
         provider: Provider,
         pool: Pool,
         network: Network,
         executor: Tasks,
         events: Events,
+        evm_config: EvmConfig,
     ) -> Result<RpcServerHandle, RpcError>
     where
         Provider: BlockReaderIdExt
@@ -317,6 +363,7 @@ impl RpcServerArgs {
         Network: NetworkInfo + Peers + Clone + 'static,
         Tasks: TaskSpawner + Clone + 'static,
         Events: CanonStateSubscriptions + Clone + 'static,
+        EvmConfig: EvmEnvConfig + 'static,
     {
         reth_rpc_builder::launch(
             provider,
@@ -326,12 +373,14 @@ impl RpcServerArgs {
             self.rpc_server_config(),
             executor,
             events,
+            evm_config,
         )
         .await
     }
 
     /// Create Engine API server.
-    pub async fn start_auth_server<Provider, Pool, Network, Tasks, EngineT>(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_auth_server<Provider, Pool, Network, Tasks, EngineT, EvmConfig>(
         &self,
         provider: Provider,
         pool: Pool,
@@ -339,6 +388,7 @@ impl RpcServerArgs {
         executor: Tasks,
         engine_api: EngineApi<Provider, EngineT>,
         jwt_secret: JwtSecret,
+        evm_config: EvmConfig,
     ) -> Result<AuthServerHandle, RpcError>
     where
         Provider: BlockReaderIdExt
@@ -353,6 +403,7 @@ impl RpcServerArgs {
         Network: NetworkInfo + Peers + Clone + 'static,
         Tasks: TaskSpawner + Clone + 'static,
         EngineT: EngineTypes + 'static,
+        EvmConfig: EvmEnvConfig + 'static,
     {
         let socket_address = SocketAddr::new(self.auth_addr, self.auth_port);
 
@@ -364,6 +415,7 @@ impl RpcServerArgs {
             engine_api,
             socket_address,
             jwt_secret,
+            evm_config,
         )
         .await
     }
