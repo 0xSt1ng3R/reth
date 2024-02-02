@@ -84,7 +84,8 @@ where
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
                 env.block.basefee = base_fee;
-                let base_fee_for_gas_price_calculation = base_fee.map(|bf| bf.low_u64());
+                // let base_fee_for_gas_price_calculation = base_fee.map(|bf| bf.low_u64());
+                let base_fee_for_gas_price_calculation = Some(base_fee.low_u64());
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
                     .map(|acc| acc.balance)
