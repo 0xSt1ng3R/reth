@@ -80,9 +80,9 @@ where
                 let coinbase = block_env.coinbase;
 
                 if let Some(base_fee) = base_fee {
-                    let basefee = u64::from(base_fee);
+                    let base_fee = u64::from(base_fee);
                 } else {
-                    let basefee = Some(block_env.basefee.to::<u64>());
+                    let base_fee = Some(block_env.basefee.to::<u64>());
                 }
 
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
@@ -107,7 +107,7 @@ where
                     let tx = tx.into_ecrecovered_transaction();
                     hash_bytes.extend_from_slice(tx.hash().as_slice());
                     let gas_price = tx
-                        .effective_tip_per_gas(basefee)
+                        .effective_tip_per_gas(base_fee)
                         .ok_or_else(|| RpcInvalidTransactionError::FeeCapTooLow)?;
                     tx.try_fill_tx_env(&mut evm.env.tx)?;
                     let ResultAndState { result, state } = evm.transact()?;
