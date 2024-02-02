@@ -78,7 +78,7 @@ where
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
                 let coinbase = block_env.coinbase;
-                let base_fee = base_fee.or_else(|| Some(block_env.basefee.to::<u64>()));
+                let base_fee = base_fee.unwrap_or_else(|| block_env.basefee);
 
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
