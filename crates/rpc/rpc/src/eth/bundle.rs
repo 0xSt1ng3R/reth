@@ -74,16 +74,15 @@ where
         // use the block number of the request
         block_env.number = U256::from(block_number);
 
+        let base_fee = base_fee.or_else(|| Some(block_env.basefee));
+        block_env.basefee = base_fee.unwrap_or_default();
+
         self.inner
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
                 let coinbase = block_env.coinbase;
-                let base_fee = base_fee.or_else(|| Some(block_env.basefee));
-
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
-
-                env.block.basefee = base_fee.unwrap_or_default();
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
                     .map(|acc| acc.balance)
