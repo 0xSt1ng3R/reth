@@ -84,6 +84,7 @@ where
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
                 env.block.basefee = base_fee;
+                let base_fee_for_gas_price_calculation = base_fee.map(|bf| bf.low_u64());
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
                     .map(|acc| acc.balance)
@@ -104,7 +105,7 @@ where
                     let tx = tx.into_ecrecovered_transaction();
                     hash_bytes.extend_from_slice(tx.hash().as_slice());
                     let gas_price = tx
-                        .effective_tip_per_gas(base_fee)
+                        .effective_tip_per_gas(base_fee_for_gas_price_calculation)
                         .ok_or_else(|| RpcInvalidTransactionError::FeeCapTooLow)?;
                     tx.try_fill_tx_env(&mut evm.env.tx)?;
                     let ResultAndState { result, state } = evm.transact()?;
