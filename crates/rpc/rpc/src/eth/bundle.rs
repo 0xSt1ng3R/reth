@@ -78,14 +78,12 @@ where
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
                 let coinbase = block_env.coinbase;
-                let base_fee = base_fee.unwrap_or_else(|| block_env.basefee);
+                let base_fee = base_fee.or_else(|| Some(block_env.basefee));
 
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
                 env.block.basefee = base_fee;
-                // let base_fee_for_gas_price_calculation = base_fee.map(|bf| bf.low_u64());
-                let base_fee_for_gas_price_calculation = Some(base_fee.low_u64());
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
                     .map(|acc| acc.balance)
@@ -106,7 +104,7 @@ where
                     let tx = tx.into_ecrecovered_transaction();
                     hash_bytes.extend_from_slice(tx.hash().as_slice());
                     let gas_price = tx
-                        .effective_tip_per_gas(base_fee_for_gas_price_calculation)
+                        .effective_tip_per_gas(base_fee.unwrap_or_default())
                         .ok_or_else(|| RpcInvalidTransactionError::FeeCapTooLow)?;
                     tx.try_fill_tx_env(&mut evm.env.tx)?;
                     let ResultAndState { result, state } = evm.transact()?;
