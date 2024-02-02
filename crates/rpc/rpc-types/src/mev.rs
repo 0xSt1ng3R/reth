@@ -631,6 +631,8 @@ pub struct EthCallBundle {
     /// the timestamp to use for this bundle simulation, in seconds since the unix epoch
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_fee: Option<u64>,
 }
 
 /// Response for `eth_callBundle`
