@@ -83,7 +83,7 @@ where
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
-                env.block.basefee = base_fee;
+                env.block.basefee = base_fee.unwrap_or_default();
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
                     .map(|acc| acc.balance)
