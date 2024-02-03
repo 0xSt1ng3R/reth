@@ -46,7 +46,7 @@ where
     /// state, or it can be used to simulate a past block. The sender is responsible for signing the
     /// transactions and using the correct nonce and ensuring validity
     pub async fn call_bundle(&self, bundle: EthCallBundle) -> EthResult<EthCallBundleResponse> {
-        let EthCallBundle { txs, block_number, state_block_number, timestamp, coinbase_addr, base_fee } = bundle;
+        let EthCallBundle { txs, block_number, state_block_number, timestamp, coinbase, base_fee } = bundle;
         if txs.is_empty() {
             return Err(EthApiError::InvalidParams(
                 EthBundleError::EmptyBundleTransactions.to_string(),
@@ -80,11 +80,11 @@ where
         self.inner
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
-                let coinbase = coinbase_addr.or_else(|| Some(block_env.coinbase))
+                let coinbase_addr = coinbase.or_else(|| Some(block_env.coinbase))
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
-                let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase)?
+                let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase_addr)?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
                 let mut coinbase_balance_before_tx = initial_coinbase;
@@ -116,7 +116,7 @@ where
 
                     // coinbase is always present in the result state
                     coinbase_balance_after_tx =
-                        state.get(&coinbase).map(|acc| acc.info.balance).unwrap_or_default();
+                        state.get(&coinbase_addr).map(|acc| acc.info.balance).unwrap_or_default();
                     let coinbase_diff =
                         coinbase_balance_after_tx.saturating_sub(coinbase_balance_before_tx);
                     let eth_sent_to_coinbase = coinbase_diff.saturating_sub(gas_fees);
