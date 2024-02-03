@@ -80,11 +80,11 @@ where
         self.inner
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
-                let coinbase_addr = coinbase.or_else(|| Some(block_env.coinbase));
+                let coinbase_addr = coinbase.unwrap_or_else(|| Some(block_env.coinbase)).unwrap();
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
-                let initial_coinbase = DatabaseRef::basic_ref(&db, Some(coinbase_addr))?
+                let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase_addr)?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
                 let mut coinbase_balance_before_tx = initial_coinbase;
