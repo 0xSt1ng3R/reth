@@ -84,7 +84,7 @@ where
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
-                let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase_addr)?
+                let initial_coinbase = DatabaseRef::basic_ref(&db, Some(coinbase_addr))?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
                 let mut coinbase_balance_before_tx = initial_coinbase;
