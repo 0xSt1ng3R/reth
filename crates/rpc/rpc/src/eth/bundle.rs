@@ -46,7 +46,7 @@ where
     /// state, or it can be used to simulate a past block. The sender is responsible for signing the
     /// transactions and using the correct nonce and ensuring validity
     pub async fn call_bundle(&self, bundle: EthCallBundle) -> EthResult<EthCallBundleResponse> {
-        let EthCallBundle { txs, block_number, state_block_number, timestamp, base_fee } = bundle;
+        let EthCallBundle { txs, block_number, state_block_number, timestamp, coinbase_addr, base_fee } = bundle;
         if txs.is_empty() {
             return Err(EthApiError::InvalidParams(
                 EthBundleError::EmptyBundleTransactions.to_string(),
@@ -80,7 +80,7 @@ where
         self.inner
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
-                let coinbase = block_env.coinbase;
+                let coinbase = coinbase_addr.or_else(|| Some(block_env.coinbase))
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
