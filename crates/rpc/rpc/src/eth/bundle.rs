@@ -80,7 +80,7 @@ where
         self.inner
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
-                let coinbase_addr = coinbase.unwrap_or_else(|| Some(block_env.coinbase)).unwrap();
+                let coinbase_addr = coinbase.unwrap_or_else(|| Some(block_env.coinbase)).unwrap_or(block_env.coinbase);
                 let env = Env { cfg, block: block_env, tx: TxEnv::default() };
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
