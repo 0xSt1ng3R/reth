@@ -1957,6 +1957,67 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
             })
     }
 
+    fn changed_storages_with_range_by_addresses_with_content_1(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+        addresses: Vec<Address>,
+    ) -> ProviderResult<BTreeMap<Address, HashMap<B256, StorageEntry>>> {
+        let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
+        
+        let result = self.tx
+            .cursor_read::<tables::StorageChangeSet>()?
+            .walk_range(BlockNumberAddress::range(range))?
+            .try_fold(BTreeMap::new(), |mut accounts: BTreeMap<Address, HashMap<B256, StorageEntry>>, entry| {
+                let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
+                if addresses.contains(&entry_address) {
+                    let storage_content = plain_storage
+                        .seek_by_key_subkey(entry_address, storage_entry.key)?
+                        .filter(|v| v.key == storage_entry.key)
+                        .unwrap_or_else(|| StorageEntry { key: storage_entry.key, value: Default::default() });
+                    accounts
+                        .entry(entry_address)
+                        .or_default()
+                        .insert(storage_entry.key, storage_content);
+                }
+                Ok(accounts)
+            })?;
+        Ok(result)
+    }
+
+    fn changed_storages_with_range_by_addresses_with_content_2(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+        addresses: Vec<Address>,
+    ) -> ProviderResult<BTreeMap<Address, HashMap<B256, StorageEntry>>> {
+        let changes = self.tx
+            .cursor_read::<tables::StorageChangeSet>()?
+            .walk_range(BlockNumberAddress::range(range))?
+            .try_fold(BTreeMap::new(), |mut acc: BTreeMap<Address, Vec<B256>>, entry| {
+                let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
+                if addresses.contains(&entry_address) {
+                    acc.entry(entry_address).or_default().push(storage_entry.key);
+                }
+                Ok(acc)
+            })?;
+
+        let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
+        let mut result = BTreeMap::new();
+
+        for (address, keys) in changes {
+            let mut storage_map = HashMap::new();
+            for key in keys {
+                let storage_content = plain_storage
+                    .seek_by_key_subkey(address, key)?
+                    .filter(|v| v.key == key)
+                    .unwrap_or_else(|| StorageEntry { key, value: Default::default() });
+                storage_map.insert(key, storage_content);
+            }
+            result.insert(address, storage_map);
+        }
+
+        Ok(result)
+    }
+
     fn changed_storages_and_blocks_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
