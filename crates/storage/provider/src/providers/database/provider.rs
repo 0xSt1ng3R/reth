@@ -1940,6 +1940,26 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
             })
     }
 
+    fn changed_storages_with_range_by_address_faster(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+        address: Address,
+    ) -> ProviderResult<BTreeMap<BlockNumber, BTreeSet<B256>>> {
+        let mut cursor = self.tx.cursor_read::<tables::StorageChangeSet>()?;
+        let mut accounts = BTreeMap::new();
+        for block_number in *range.start()..=*range.end() {
+            if let Ok(Some(_)) = cursor.seek_by_key_subkey(&(block_number, address), None) {
+                while let Some(((bn, addr), storage_entry)) = cursor.next()? {
+                    if bn != block_number || addr != address {
+                        break;
+                    }
+                    accounts.entry(bn).or_default().insert(storage_entry.key);
+                }
+            }
+        }
+        Ok(accounts)
+    }
+
     fn changed_storages_and_blocks_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
