@@ -23,6 +23,16 @@ pub trait StorageReader: Send + Sync {
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>>;
 
+    fn changed_storages_with_range_with_content_1(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+
+    fn changed_storages_with_range_with_content_2(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+
     /// Iterate over storage changesets by block number range and address and return all storage slots that were changed.
     fn changed_storages_with_range_by_address(
         &self,
