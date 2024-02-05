@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     ops::RangeInclusive,
 };
+use ahash::{AHashSet};
 
 use auto_impl::auto_impl;
 use reth_interfaces::provider::ProviderResult;
