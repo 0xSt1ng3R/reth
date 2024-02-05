@@ -29,13 +29,6 @@ pub trait StorageReader: Send + Sync {
         address: Address,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>>;
 
-    /// Iterate over storage changesets by block number range and address and return all storage slots that were changed, and do it faster.
-    fn changed_storages_with_range_by_address_faster(
-        &self,
-        range: RangeInclusive<BlockNumber>,
-        address: Address,
-    ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>>;
-
     /// Iterate over storage changesets and return all storage slots that were changed alongside
     /// each specific set of blocks.
     ///
