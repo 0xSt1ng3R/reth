@@ -40,13 +40,13 @@ pub trait StorageReader: Send + Sync {
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: Vec<Address>,
-    ) -> ProviderResult<BTreeMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
 
     fn changed_storages_with_range_by_addresses_with_content_2(
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: Vec<Address>,
-    ) -> ProviderResult<BTreeMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
 
     /// Iterate over storage changesets and return all storage slots that were changed alongside
     /// each specific set of blocks.
