@@ -1923,17 +1923,17 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
             })
     }
 
-    fn changed_storages_with_range_by_address(
+    fn changed_storages_with_range_by_addresses(
         &self,
         range: RangeInclusive<BlockNumber>,
-        address: Address,
+        addresses: Vec<Address>,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>> {
         self.tx
             .cursor_read::<tables::StorageChangeSet>()?
             .walk_range(BlockNumberAddress::range(range))?
             .try_fold(BTreeMap::new(), |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
-                if entry_address == address {
+                if addresses.contains(&entry_address) {
                     accounts.entry(entry_address).or_default().insert(storage_entry.key);
                 }
                 Ok(accounts)
