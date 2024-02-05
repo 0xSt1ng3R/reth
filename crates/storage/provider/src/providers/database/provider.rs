@@ -1967,7 +1967,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         let result = self.tx
             .cursor_read::<tables::StorageChangeSet>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(HashMap::new(), |mut accounts: HashMap<Address, HashMap<B256, StorageEntry>>, entry| {
+            .try_fold(HashMap::new(), |mut accounts: HashMap<Address, HashMap<B256, StorageEntry>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
                     let storage_content = plain_storage
@@ -1992,7 +1992,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         let changes = self.tx
             .cursor_read::<tables::StorageChangeSet>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(HashMap::new(), |mut acc: HashMap<Address, Vec<B256>>, entry| {
+            .try_fold(HashMap::new(), |mut acc: HashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
                     acc.entry(entry_address).or_default().push(storage_entry.key);
