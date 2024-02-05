@@ -1940,23 +1940,34 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
             })
     }
 
-    fn changed_storages_with_range_by_address_faster(
+    fn changed_storages_with_range_by_address(
         &self,
         range: RangeInclusive<BlockNumber>,
         address: Address,
     ) -> ProviderResult<BTreeMap<BlockNumber, BTreeSet<B256>>> {
-        let mut cursor = self.tx.cursor_read::<tables::StorageChangeSet>()?;
         let mut accounts = BTreeMap::new();
-        for block_number in *range.start()..=*range.end() {
-            if let Ok(Some(_)) = cursor.seek_by_key_subkey(&(block_number, address), None) {
-                while let Some(((bn, addr), storage_entry)) = cursor.next()? {
-                    if bn != block_number || addr != address {
-                        break;
+        let mut cursor = self.tx.cursor_read::<tables::StorageChangeSet>()?;
+
+        cursor.walk_range(BlockNumberAddress::range(range))?
+            .try_for_each(|entry| {
+                let (BlockNumberAddress((block_number, entry_address)), _) = entry?;
+                
+                if entry_address == address {
+                    if cursor.seek_by_key_subkey(&(block_number, address), None).is_ok() {
+                        loop {
+                            match cursor.next()? {
+                                Some(((bn, addr), storage_entry)) if bn == block_number && addr == address => {
+                                    accounts.entry(block_number).or_default().insert(storage_entry.key);
+                                },
+                                _ => break,
+                            }
+                        }
                     }
-                    accounts.entry(bn).or_default().insert(storage_entry.key);
                 }
-            }
-        }
+
+                Ok(())
+            })?;
+
         Ok(accounts)
     }
 
