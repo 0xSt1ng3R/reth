@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     ops::RangeInclusive,
 };
-use ahash::{AHashSet};
+use ahash::{AHashSet, AHashMap};
 
 use auto_impl::auto_impl;
 use reth_interfaces::provider::ProviderResult;
@@ -26,12 +26,12 @@ pub trait StorageReader: Send + Sync {
     fn changed_storages_with_range_with_content_1(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>>;
 
     fn changed_storages_with_range_with_content_2(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>>;
 
     /// Iterate over storage changesets by block number range and address and return all storage slots that were changed.
     fn changed_storages_with_range_by_address(
@@ -51,13 +51,13 @@ pub trait StorageReader: Send + Sync {
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: AHashSet<Address>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>>;
 
     fn changed_storages_with_range_by_addresses_with_content_2(
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: AHashSet<Address>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>>;
 
     /// Iterate over storage changesets and return all storage slots that were changed alongside
     /// each specific set of blocks.
