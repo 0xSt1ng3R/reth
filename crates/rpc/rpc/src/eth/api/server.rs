@@ -292,7 +292,7 @@ where
     /// Handler for: `eth_createBundleAccessList`
     async fn create_bundle_access_list(
         &self,
-        calls: Vec<CallRequest>,
+        calls: Vec<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> Result<Vec<AccessListWithGasUsed>> {
         trace!(target: "rpc::eth", ?calls, ?block_number, "Serving eth_createBundleAccessList");

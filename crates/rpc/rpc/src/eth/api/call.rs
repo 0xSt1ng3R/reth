@@ -358,7 +358,7 @@ where
     /// Creates the AccessList for the `calls` bundle vector at the [BlockId] or latest.
     pub(crate) async fn create_bundle_access_list_at(
         &self,
-        calls: Vec<CallRequest>,
+        calls: Vec<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         self.on_blocking_task(|this| async move {
@@ -369,7 +369,7 @@ where
 
     pub async fn create_bundle_access_list_with(
         &self,
-        calls: Vec<CallRequest>,
+        calls: Vec<TransactionRequest>,
         block_id: Option<BlockId>,
     ) -> EthResult<Vec<AccessListWithGasUsed>> {
         let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));

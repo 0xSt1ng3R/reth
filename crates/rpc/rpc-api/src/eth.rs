@@ -196,7 +196,7 @@ pub trait EthApi {
     #[method(name = "createBundleAccessList")]
     async fn create_bundle_access_list(
         &self,
-        calls: Vec<CallRequest>,
+        calls: Vec<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<AccessListWithGasUsed>>;
 
