@@ -10,6 +10,10 @@
 pub mod args;
 pub mod cli;
 pub mod dirs;
+pub mod engine_api_store;
+pub mod events;
+pub mod exit;
+pub mod init;
 pub mod metrics;
 pub mod node_config;
 pub mod utils;

@@ -65,6 +65,11 @@ Options:
       --trusted-only
           Connect only to trusted peers
 
+      --retries <RETRIES>
+          The number of retries per request
+          
+          [default: 5]
+
       --instance <INSTANCE>
           Add a new instance of a node.
           
@@ -75,11 +80,6 @@ Options:
           Changes to the following port numbers: - DISCOVERY_PORT: default + `instance` - 1 - AUTH_PORT: default + `instance` * 100 - 100 - HTTP_RPC_PORT: default - `instance` + 1 - WS_RPC_PORT: default + `instance` * 2 - 2
           
           [default: 1]
-
-      --retries <RETRIES>
-          The number of retries per request
-          
-          [default: 5]
 
       --nat <NAT>
           [default: any]
@@ -115,7 +115,7 @@ Logging:
       --log.stdout.filter <FILTER>
           The filter to use for logs written to stdout
           
-          [default: info]
+          [default: ]
 
       --log.file.format <FORMAT>
           The format to use for logs written to the log file

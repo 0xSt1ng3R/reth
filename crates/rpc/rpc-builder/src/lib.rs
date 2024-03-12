@@ -18,7 +18,7 @@
 //!
 //! ```
 //! use reth_network_api::{NetworkInfo, Peers};
-//! use reth_node_api::EvmEnvConfig;
+//! use reth_node_api::ConfigureEvmEnv;
 //! use reth_provider::{
 //!     AccountReader, BlockReaderIdExt, CanonStateSubscriptions, ChainSpecProvider,
 //!     ChangeSetReader, EvmEnvProvider, StateProviderFactory,
@@ -47,7 +47,7 @@
 //!     Pool: TransactionPool + Clone + 'static,
 //!     Network: NetworkInfo + Peers + Clone + 'static,
 //!     Events: CanonStateSubscriptions + Clone + 'static,
-//!     EvmConfig: EvmEnvConfig + 'static,
+//!     EvmConfig: ConfigureEvmEnv + 'static,
 //! {
 //!     // configure the rpc module per transport
 //!     let transports = TransportRpcModuleConfig::default().with_http(vec![
@@ -78,7 +78,7 @@
 //!
 //! ```
 //! use reth_network_api::{NetworkInfo, Peers};
-//! use reth_node_api::{EngineTypes, EvmEnvConfig};
+//! use reth_node_api::{ConfigureEvmEnv, EngineTypes};
 //! use reth_provider::{
 //!     AccountReader, BlockReaderIdExt, CanonStateSubscriptions, ChainSpecProvider,
 //!     ChangeSetReader, EvmEnvProvider, StateProviderFactory,
@@ -113,8 +113,8 @@
 //!     Network: NetworkInfo + Peers + Clone + 'static,
 //!     Events: CanonStateSubscriptions + Clone + 'static,
 //!     EngineApi: EngineApiServer<EngineT>,
-//!     EngineT: EngineTypes,
-//!     EvmConfig: EvmEnvConfig + 'static,
+//!     EngineT: EngineTypes + 'static,
+//!     EvmConfig: ConfigureEvmEnv + 'static,
 //! {
 //!     // configure the rpc module per transport
 //!     let transports = TransportRpcModuleConfig::default().with_http(vec![
@@ -151,6 +151,7 @@
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
     issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
 )]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use std::{
@@ -167,14 +168,17 @@ use jsonrpsee::{
     server::{IdProvider, Server, ServerHandle},
     Methods, RpcModule,
 };
-use reth_node_api::{EngineTypes, EvmEnvConfig};
-use reth_node_builder::EthEvmConfig;
+use reth_node_api::{ConfigureEvmEnv, EngineTypes};
 use serde::{Deserialize, Serialize, Serializer};
-use strum::{AsRefStr, EnumIter, EnumVariantNames, IntoStaticStr, ParseError, VariantNames};
+use strum::{AsRefStr, EnumIter, IntoStaticStr, ParseError, VariantArray, VariantNames};
 use tower::layer::util::{Identity, Stack};
 use tower_http::cors::CorsLayer;
 use tracing::{instrument, trace};
 
+use crate::{
+    auth::AuthRpcModule, error::WsHttpSamePortError, metrics::RpcServerMetrics,
+    RpcModuleSelection::Selection,
+};
 use constants::*;
 use error::{RpcError, ServerKind};
 use reth_ipc::server::IpcServer;
@@ -191,18 +195,16 @@ use reth_rpc::{
         gas_oracle::GasPriceOracle,
         EthBundle, FeeHistoryCache,
     },
-    AdminApi, AuthLayer, BlockingTaskGuard, BlockingTaskPool, Claims, DebugApi, EngineEthApi,
-    EthApi, EthFilter, EthPubSub, EthSubscriptionIdProvider, JwtAuthValidator, JwtSecret, NetApi,
-    OtterscanApi, RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
+    AdminApi, AuthLayer, Claims, DebugApi, EngineEthApi, EthApi, EthFilter, EthPubSub,
+    EthSubscriptionIdProvider, JwtAuthValidator, JwtSecret, NetApi, OtterscanApi, RPCApi, RethApi,
+    TraceApi, TxPoolApi, Web3Api,
 };
-use reth_rpc_api::{servers::*, EngineApiServer};
-use reth_tasks::{TaskSpawner, TokioTaskExecutor};
+use reth_rpc_api::servers::*;
+use reth_tasks::{
+    pool::{BlockingTaskGuard, BlockingTaskPool},
+    TaskSpawner, TokioTaskExecutor,
+};
 use reth_transaction_pool::{noop::NoopTransactionPool, TransactionPool};
-
-use crate::{
-    auth::AuthRpcModule, error::WsHttpSamePortError, metrics::RpcServerMetrics,
-    RpcModuleSelection::Selection,
-};
 // re-export for convenience
 pub use crate::eth::{EthConfig, EthHandlers};
 
@@ -250,7 +252,7 @@ where
     Network: NetworkInfo + Peers + Clone + 'static,
     Tasks: TaskSpawner + Clone + 'static,
     Events: CanonStateSubscriptions + Clone + 'static,
-    EvmConfig: EvmEnvConfig + 'static,
+    EvmConfig: ConfigureEvmEnv + 'static,
 {
     let module_config = module_config.into();
     let server_config = server_config.into();
@@ -322,7 +324,7 @@ impl<Provider, Pool, Network, Tasks, Events, EvmConfig>
 
     /// Configure a [NoopTransactionPool] instance.
     ///
-    /// Caution: This will configure a pool API that does abosultely nothing.
+    /// Caution: This will configure a pool API that does absolutely nothing.
     /// This is only intended for allow easier setup of namespaces that depend on the [EthApi] which
     /// requires a [TransactionPool] implementation.
     pub fn with_noop_pool(
@@ -353,7 +355,7 @@ impl<Provider, Pool, Network, Tasks, Events, EvmConfig>
 
     /// Configure a [NoopNetwork] instance.
     ///
-    /// Caution: This will configure a network API that does abosultely nothing.
+    /// Caution: This will configure a network API that does absolutely nothing.
     /// This is only intended for allow easier setup of namespaces that depend on the [EthApi] which
     /// requires a [NetworkInfo] implementation.
     pub fn with_noop_network(
@@ -418,7 +420,7 @@ impl<Provider, Pool, Network, Tasks, Events, EvmConfig>
         evm_config: E,
     ) -> RpcModuleBuilder<Provider, Pool, Network, Tasks, Events, E>
     where
-        E: EvmEnvConfig + 'static,
+        E: ConfigureEvmEnv + 'static,
     {
         let Self { provider, pool, executor, network, events, .. } = self;
         RpcModuleBuilder { provider, network, pool, executor, events, evm_config }
@@ -441,14 +443,14 @@ where
     Network: NetworkInfo + Peers + Clone + 'static,
     Tasks: TaskSpawner + Clone + 'static,
     Events: CanonStateSubscriptions + Clone + 'static,
-    EvmConfig: EvmEnvConfig + 'static,
+    EvmConfig: ConfigureEvmEnv + 'static,
 {
     /// Configures all [RpcModule]s specific to the given [TransportRpcModuleConfig] which can be
     /// used to start the transport server(s).
     ///
     /// This behaves exactly as [RpcModuleBuilder::build] for the [TransportRpcModules], but also
     /// configures the auth (engine api) server, which exposes a subset of the `eth_` namespace.
-    pub fn build_with_auth_server<EngineApi, EngineT: EngineTypes>(
+    pub fn build_with_auth_server<EngineApi, EngineT>(
         self,
         module_config: TransportRpcModuleConfig,
         engine: EngineApi,
@@ -458,6 +460,7 @@ where
         RethModuleRegistry<Provider, Pool, Network, Tasks, Events, EvmConfig>,
     )
     where
+        EngineT: EngineTypes + 'static,
         EngineApi: EngineApiServer<EngineT>,
     {
         let mut modules = TransportRpcModules::default();
@@ -494,20 +497,24 @@ where
     ///
     /// ```no_run
     /// use reth_network_api::noop::NoopNetwork;
+    /// use reth_node_api::ConfigureEvmEnv;
     /// use reth_provider::test_utils::{NoopProvider, TestCanonStateSubscriptions};
     /// use reth_rpc_builder::RpcModuleBuilder;
     /// use reth_tasks::TokioTaskExecutor;
     /// use reth_transaction_pool::noop::NoopTransactionPool;
     ///
-    /// let mut registry = RpcModuleBuilder::default()
-    ///     .with_provider(NoopProvider::default())
-    ///     .with_pool(NoopTransactionPool::default())
-    ///     .with_network(NoopNetwork::default())
-    ///     .with_executor(TokioTaskExecutor::default())
-    ///     .with_events(TestCanonStateSubscriptions::default())
-    ///     .into_registry(Default::default());
+    /// fn init<Evm: ConfigureEvmEnv + 'static>(evm: Evm) {
+    ///     let mut registry = RpcModuleBuilder::default()
+    ///         .with_provider(NoopProvider::default())
+    ///         .with_pool(NoopTransactionPool::default())
+    ///         .with_network(NoopNetwork::default())
+    ///         .with_executor(TokioTaskExecutor::default())
+    ///         .with_events(TestCanonStateSubscriptions::default())
+    ///         .with_evm_config(evm)
+    ///         .into_registry(Default::default());
     ///
-    /// let eth_api = registry.eth_api();
+    ///     let eth_api = registry.eth_api();
+    /// }
     /// ```
     pub fn into_registry(
         self,
@@ -549,9 +556,9 @@ where
     }
 }
 
-impl Default for RpcModuleBuilder<(), (), (), (), (), EthEvmConfig> {
+impl Default for RpcModuleBuilder<(), (), (), (), (), ()> {
     fn default() -> Self {
-        RpcModuleBuilder::new((), (), (), (), (), EthEvmConfig::default())
+        RpcModuleBuilder::new((), (), (), (), (), ())
     }
 }
 
@@ -625,9 +632,9 @@ impl RpcModuleSelection {
     pub const STANDARD_MODULES: [RethRpcModule; 3] =
         [RethRpcModule::Eth, RethRpcModule::Net, RethRpcModule::Web3];
 
-    /// Returns a selection of [RethRpcModule] with all [RethRpcModule::VARIANTS].
+    /// Returns a selection of [RethRpcModule] with all [RethRpcModule::all_variants].
     pub fn all_modules() -> Vec<RethRpcModule> {
-        RpcModuleSelection::try_from_selection(RethRpcModule::VARIANTS.iter().copied())
+        RpcModuleSelection::try_from_selection(RethRpcModule::all_variants().iter().copied())
             .expect("valid selection")
             .into_selection()
     }
@@ -732,7 +739,7 @@ impl RpcModuleSelection {
         Network: NetworkInfo + Peers + Clone + 'static,
         Tasks: TaskSpawner + Clone + 'static,
         Events: CanonStateSubscriptions + Clone + 'static,
-        EvmConfig: EvmEnvConfig + 'static,
+        EvmConfig: ConfigureEvmEnv + 'static,
     {
         let mut registry =
             RethModuleRegistry::new(provider, pool, network, executor, events, config, evm_config);
@@ -820,7 +827,8 @@ impl fmt::Display for RpcModuleSelection {
     Hash,
     AsRefStr,
     IntoStaticStr,
-    EnumVariantNames,
+    VariantNames,
+    VariantArray,
     EnumIter,
     Deserialize,
 )]
@@ -857,9 +865,14 @@ pub enum RethRpcModule {
 // === impl RethRpcModule ===
 
 impl RethRpcModule {
+    /// Returns all variant names of the enum
+    pub const fn all_variant_names() -> &'static [&'static str] {
+        <Self as VariantNames>::VARIANTS
+    }
+
     /// Returns all variants of the enum
-    pub const fn all_variants() -> &'static [&'static str] {
-        Self::VARIANTS
+    pub const fn all_variants() -> &'static [Self] {
+        <Self as VariantArray>::VARIANTS
     }
 
     /// Returns all variants of the enum
@@ -919,7 +932,7 @@ impl Serialize for RethRpcModule {
 }
 
 /// A Helper type the holds instances of the configured modules.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RethModuleRegistry<Provider, Pool, Network, Tasks, Events, EvmConfig> {
     provider: Provider,
     pool: Pool,
@@ -1048,7 +1061,7 @@ where
     Network: NetworkInfo + Peers + Clone + 'static,
     Tasks: TaskSpawner + Clone + 'static,
     Events: CanonStateSubscriptions + Clone + 'static,
-    EvmConfig: EvmEnvConfig + 'static,
+    EvmConfig: ConfigureEvmEnv + 'static,
 {
     /// Register Eth Namespace
     ///
@@ -1101,7 +1114,7 @@ where
     /// Note: This does _not_ register the `engine_` in this registry.
     pub fn create_auth_module<EngineApi, EngineT>(&mut self, engine_api: EngineApi) -> AuthRpcModule
     where
-        EngineT: EngineTypes,
+        EngineT: EngineTypes + 'static,
         EngineApi: EngineApiServer<EngineT>,
     {
         let eth_handlers = self.eth_handlers();
@@ -1263,76 +1276,77 @@ where
     where
         F: FnOnce(&EthHandlers<Provider, Pool, Network, Events, EvmConfig>) -> R,
     {
-        if self.eth.is_none() {
-            let cache = EthStateCache::spawn_with(
-                self.provider.clone(),
-                self.config.eth.cache.clone(),
-                self.executor.clone(),
-                self.evm_config.clone(),
-            );
-            let gas_oracle = GasPriceOracle::new(
-                self.provider.clone(),
-                self.config.eth.gas_oracle.clone(),
-                cache.clone(),
-            );
-            let new_canonical_blocks = self.events.canonical_state_stream();
-            let c = cache.clone();
+        f(match &self.eth {
+            Some(eth) => eth,
+            None => self.eth.insert(self.init_eth()),
+        })
+    }
 
-            self.executor.spawn_critical(
-                "cache canonical blocks task",
-                Box::pin(async move {
-                    cache_new_blocks_task(c, new_canonical_blocks).await;
-                }),
-            );
+    fn init_eth(&self) -> EthHandlers<Provider, Pool, Network, Events, EvmConfig> {
+        let cache = EthStateCache::spawn_with(
+            self.provider.clone(),
+            self.config.eth.cache.clone(),
+            self.executor.clone(),
+            self.evm_config.clone(),
+        );
+        let gas_oracle = GasPriceOracle::new(
+            self.provider.clone(),
+            self.config.eth.gas_oracle.clone(),
+            cache.clone(),
+        );
+        let new_canonical_blocks = self.events.canonical_state_stream();
+        let c = cache.clone();
 
-            let fee_history_cache =
-                FeeHistoryCache::new(cache.clone(), self.config.eth.fee_history_cache.clone());
-            let new_canonical_blocks = self.events.canonical_state_stream();
-            let fhc = fee_history_cache.clone();
-            let provider_clone = self.provider.clone();
-            self.executor.spawn_critical(
-                "cache canonical blocks for fee history task",
-                Box::pin(async move {
-                    fee_history_cache_new_blocks_task(fhc, new_canonical_blocks, provider_clone)
-                        .await;
-                }),
-            );
+        self.executor.spawn_critical(
+            "cache canonical blocks task",
+            Box::pin(async move {
+                cache_new_blocks_task(c, new_canonical_blocks).await;
+            }),
+        );
 
-            let executor = Box::new(self.executor.clone());
-            let blocking_task_pool =
-                BlockingTaskPool::build().expect("failed to build tracing pool");
-            let api = EthApi::with_spawner(
-                self.provider.clone(),
-                self.pool.clone(),
-                self.network.clone(),
-                cache.clone(),
-                gas_oracle,
-                self.config.eth.rpc_gas_cap,
-                executor.clone(),
-                blocking_task_pool.clone(),
-                fee_history_cache,
-                self.evm_config.clone(),
-            );
-            let filter = EthFilter::new(
-                self.provider.clone(),
-                self.pool.clone(),
-                cache.clone(),
-                self.config.eth.filter_config(),
-                executor.clone(),
-            );
+        let fee_history_cache =
+            FeeHistoryCache::new(cache.clone(), self.config.eth.fee_history_cache.clone());
+        let new_canonical_blocks = self.events.canonical_state_stream();
+        let fhc = fee_history_cache.clone();
+        let provider_clone = self.provider.clone();
+        self.executor.spawn_critical(
+            "cache canonical blocks for fee history task",
+            Box::pin(async move {
+                fee_history_cache_new_blocks_task(fhc, new_canonical_blocks, provider_clone).await;
+            }),
+        );
 
-            let pubsub = EthPubSub::with_spawner(
-                self.provider.clone(),
-                self.pool.clone(),
-                self.events.clone(),
-                self.network.clone(),
-                executor,
-            );
+        let executor = Box::new(self.executor.clone());
+        let blocking_task_pool = BlockingTaskPool::build().expect("failed to build tracing pool");
+        let api = EthApi::with_spawner(
+            self.provider.clone(),
+            self.pool.clone(),
+            self.network.clone(),
+            cache.clone(),
+            gas_oracle,
+            self.config.eth.rpc_gas_cap,
+            executor.clone(),
+            blocking_task_pool.clone(),
+            fee_history_cache,
+            self.evm_config.clone(),
+        );
+        let filter = EthFilter::new(
+            self.provider.clone(),
+            self.pool.clone(),
+            cache.clone(),
+            self.config.eth.filter_config(),
+            executor.clone(),
+        );
 
-            let eth = EthHandlers { api, cache, filter, pubsub, blocking_task_pool };
-            self.eth = Some(eth);
-        }
-        f(self.eth.as_ref().expect("exists; qed"))
+        let pubsub = EthPubSub::with_spawner(
+            self.provider.clone(),
+            self.pool.clone(),
+            self.events.clone(),
+            self.network.clone(),
+            executor,
+        );
+
+        EthHandlers { api, cache, filter, pubsub, blocking_task_pool }
     }
 
     /// Returns the configured [EthHandlers] or creates it if it does not exist yet
@@ -1634,9 +1648,7 @@ impl RpcServerConfig {
                     }
                     Some(ws_cors)
                 }
-                (None, cors @ Some(_)) => cors,
-                (cors @ Some(_), None) => cors,
-                _ => None,
+                (a, b) => a.or(b),
             }
             .cloned();
 
@@ -1647,7 +1659,7 @@ impl RpcServerConfig {
 
             modules.config.ensure_ws_http_identical()?;
 
-            let builder = self.http_server_config.take().expect("is set; qed");
+            let builder = self.http_server_config.take().expect("http_server_config is Some");
             let (server, addr) = WsHttpServerKind::build(
                 builder,
                 http_socket_addr,
@@ -1717,7 +1729,7 @@ impl RpcServerConfig {
     ///
     /// This consumes the builder and returns a server.
     ///
-    /// Note: The server ist not started and does nothing unless polled, See also [RpcServer::start]
+    /// Note: The server is not started and does nothing unless polled, See also [RpcServer::start]
     pub async fn build(mut self, modules: &TransportRpcModules) -> Result<RpcServer, RpcError> {
         let mut server = RpcServer::empty();
         server.ws_http = self.build_ws_http(modules).await?;
@@ -2106,7 +2118,7 @@ impl RpcServer {
     pub fn http_local_addr(&self) -> Option<SocketAddr> {
         self.ws_http.http_local_addr
     }
-    /// Return the JwtSecret of the the server
+    /// Return the JwtSecret of the server
     pub fn jwt(&self) -> Option<JwtSecret> {
         self.ws_http.jwt_secret.clone()
     }

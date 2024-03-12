@@ -5,8 +5,8 @@ use crate::{
         get_secret_key, DatabaseArgs, DebugArgs, DevArgs, NetworkArgs, PayloadBuilderArgs,
         PruningArgs, RpcServerArgs, TxPoolArgs,
     },
-    cli::{config::RethTransactionPoolConfig, db_type::DatabaseBuilder},
-    dirs::{ChainPath, DataDirPath, MaybePlatformPath},
+    cli::config::RethTransactionPoolConfig,
+    dirs::{ChainPath, DataDirPath},
     metrics::prometheus_exporter,
     utils::{get_single_header, write_peers_to_file},
 };
@@ -35,8 +35,11 @@ use reth_interfaces::{
     },
     RethResult,
 };
-use reth_network::{NetworkBuilder, NetworkConfig, NetworkHandle, NetworkManager};
-use reth_node_api::EvmEnvConfig;
+use reth_network::{
+    transactions::{TransactionFetcherConfig, TransactionsManagerConfig},
+    NetworkBuilder, NetworkConfig, NetworkHandle, NetworkManager,
+};
+use reth_node_api::ConfigureEvm;
 use reth_primitives::{
     constants::eip4844::{LoadKzgSettingsError, MAINNET_KZG_TRUSTED_SETUP},
     kzg::KzgSettings,
@@ -44,26 +47,30 @@ use reth_primitives::{
     BlockHashOrNumber, BlockNumber, ChainSpec, Head, SealedHeader, TxHash, B256, MAINNET,
 };
 use reth_provider::{
-    providers::BlockchainProvider, BlockHashReader, BlockReader,
-    BlockchainTreePendingStateProvider, CanonStateSubscriptions, HeaderProvider, HeaderSyncMode,
-    ProviderFactory, StageCheckpointReader,
+    providers::{BlockchainProvider, StaticFileProvider},
+    BlockHashReader, BlockNumReader, BlockReader, BlockchainTreePendingStateProvider,
+    CanonStateSubscriptions, HeaderProvider, HeaderSyncMode, ProviderFactory,
+    StageCheckpointReader,
 };
-use reth_revm::EvmProcessorFactory;
+use reth_revm::{
+    stack::{Hook, InspectorStackConfig},
+    EvmProcessorFactory,
+};
 use reth_stages::{
     prelude::*,
     stages::{
         AccountHashingStage, ExecutionStage, ExecutionStageThresholds, IndexAccountHistoryStage,
         IndexStorageHistoryStage, MerkleStage, SenderRecoveryStage, StorageHashingStage,
-        TotalDifficultyStage, TransactionLookupStage,
+        TransactionLookupStage,
     },
     MetricEvent,
 };
+use reth_static_file::StaticFileProducer;
 use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{
-    blobstore::DiskFileBlobStore, EthTransactionPool, TransactionPool,
-    TransactionValidationTaskExecutor,
+    blobstore::{DiskFileBlobStore, DiskFileBlobStoreConfig},
+    EthTransactionPool, TransactionPool, TransactionValidationTaskExecutor,
 };
-use revm_inspectors::stack::Hook;
 use secp256k1::SecretKey;
 use std::{
     net::{SocketAddr, SocketAddrV4},
@@ -136,11 +143,8 @@ pub static PROMETHEUS_RECORDER_HANDLE: Lazy<PrometheusHandle> =
 ///     let builder = builder.with_rpc(rpc);
 /// }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NodeConfig {
-    /// The test database
-    pub database: DatabaseBuilder,
-
     /// The path to the configuration file to use.
     pub config: Option<PathBuf>,
 
@@ -195,17 +199,12 @@ pub struct NodeConfig {
 
     /// All pruning related arguments
     pub pruning: PruningArgs,
-
-    /// Rollup related arguments
-    #[cfg(feature = "optimism")]
-    pub rollup: crate::args::RollupArgs,
 }
 
 impl NodeConfig {
     /// Creates a testing [NodeConfig], causing the database to be launched ephemerally.
     pub fn test() -> Self {
         let mut test = Self {
-            database: DatabaseBuilder::test(),
             config: None,
             chain: MAINNET.clone(),
             metrics: None,
@@ -219,8 +218,6 @@ impl NodeConfig {
             db: DatabaseArgs::default(),
             dev: DevArgs::default(),
             pruning: PruningArgs::default(),
-            #[cfg(feature = "optimism")]
-            rollup: crate::args::RollupArgs::default(),
         };
 
         // set all ports to zero by default for test instances
@@ -228,9 +225,9 @@ impl NodeConfig {
         test
     }
 
-    /// Set the datadir for the node
-    pub fn with_datadir(mut self, datadir: MaybePlatformPath<DataDirPath>) -> Self {
-        self.database = DatabaseBuilder::Real(datadir);
+    /// Sets --dev mode for the node
+    pub const fn dev(mut self) -> Self {
+        self.dev.dev = true;
         self
     }
 
@@ -312,13 +309,6 @@ impl NodeConfig {
         self
     }
 
-    /// Set the rollup args for the node
-    #[cfg(feature = "optimism")]
-    pub fn with_rollup(mut self, rollup: crate::args::RollupArgs) -> Self {
-        self.rollup = rollup;
-        self
-    }
-
     /// Get the network secret from the given data dir
     pub fn network_secret(&self, data_dir: &ChainPath<DataDirPath>) -> eyre::Result<SecretKey> {
         let network_secret_path =
@@ -347,6 +337,11 @@ impl NodeConfig {
         } else {
             None
         }
+    }
+
+    /// Returns pruning configuration.
+    pub fn prune_config(&self) -> eyre::Result<Option<PruneConfig>> {
+        self.pruning.prune_config(Arc::clone(&self.chain))
     }
 
     /// Returns the max block that the node should run to, looking it up from the network if
@@ -383,33 +378,45 @@ impl NodeConfig {
         }
     }
 
-    /// Build a network and spawn it
-    pub async fn build_network<DB>(
+    /// Create the [NetworkConfig] for the node
+    pub fn network_config<C>(
         &self,
         config: &Config,
-        provider_factory: ProviderFactory<DB>,
+        client: C,
         executor: TaskExecutor,
         head: Head,
         data_dir: &ChainPath<DataDirPath>,
-    ) -> eyre::Result<(ProviderFactory<DB>, NetworkBuilder<ProviderFactory<DB>, (), ()>)>
-    where
-        DB: Database + Unpin + Clone + 'static,
-    {
+    ) -> eyre::Result<NetworkConfig<C>> {
         info!(target: "reth::cli", "Connecting to P2P network");
         let secret_key = self.network_secret(data_dir)?;
         let default_peers_path = data_dir.known_peers_path();
-        let network_config = self.load_network_config(
+        Ok(self.load_network_config(
             config,
-            provider_factory,
+            client,
             executor.clone(),
             head,
             secret_key,
             default_peers_path.clone(),
-        );
+        ))
+    }
 
-        let client = network_config.client.clone();
+    /// Create the [NetworkBuilder].
+    ///
+    /// This only configures it and does not spawn it.
+    pub async fn build_network<C>(
+        &self,
+        config: &Config,
+        client: C,
+        executor: TaskExecutor,
+        head: Head,
+        data_dir: &ChainPath<DataDirPath>,
+    ) -> eyre::Result<NetworkBuilder<C, (), ()>>
+    where
+        C: BlockNumReader,
+    {
+        let network_config = self.network_config(config, client, executor, head, data_dir)?;
         let builder = NetworkManager::builder(network_config).await?;
-        Ok((client, builder))
+        Ok(builder)
     }
 
     /// Build the blockchain tree
@@ -424,7 +431,7 @@ impl NodeConfig {
     ) -> eyre::Result<BlockchainTree<DB, EvmProcessorFactory<EvmConfig>>>
     where
         DB: Database + Unpin + Clone + 'static,
-        EvmConfig: EvmEnvConfig + Clone + 'static,
+        EvmConfig: ConfigureEvm + Clone + 'static,
     {
         // configure blockchain tree
         let tree_externals = TreeExternals::new(
@@ -458,11 +465,18 @@ impl NodeConfig {
             + Clone
             + 'static,
     {
-        let blob_store = DiskFileBlobStore::open(data_dir.blobstore_path(), Default::default())?;
+        let blob_store = DiskFileBlobStore::open(
+            data_dir.blobstore_path(),
+            DiskFileBlobStoreConfig::default()
+                .with_max_cached_entries(self.txpool.max_cached_entries),
+        )?;
         let validator = TransactionValidationTaskExecutor::eth_builder(Arc::clone(&self.chain))
             .with_head_timestamp(head.timestamp)
             .kzg_settings(self.kzg_settings()?)
+            // use an additional validation task so we can validate transactions in parallel
             .with_additional_tasks(1)
+            // set the max tx size in bytes allowed to enter the pool
+            .with_max_tx_input_bytes(self.txpool.max_tx_input_bytes)
             .build_with_tasks(blockchain_db.clone(), executor.clone(), blob_store.clone());
 
         let transaction_pool =
@@ -530,12 +544,13 @@ impl NodeConfig {
         metrics_tx: reth_stages::MetricEventsSender,
         prune_config: Option<PruneConfig>,
         max_block: Option<BlockNumber>,
+        static_file_producer: StaticFileProducer<DB>,
         evm_config: EvmConfig,
     ) -> eyre::Result<Pipeline<DB>>
     where
         DB: Database + Unpin + Clone + 'static,
         Client: HeadersClient + BodiesClient + Clone + 'static,
-        EvmConfig: EvmEnvConfig + Clone + 'static,
+        EvmConfig: ConfigureEvm + Clone + 'static,
     {
         // building network downloaders using the fetch client
         let header_downloader = ReverseHeadersDownloaderBuilder::new(config.headers)
@@ -557,6 +572,7 @@ impl NodeConfig {
                 self.debug.continuous,
                 metrics_tx,
                 prune_config,
+                static_file_producer,
                 evm_config,
             )
             .await?;
@@ -586,6 +602,7 @@ impl NodeConfig {
         &self,
         prometheus_handle: PrometheusHandle,
         db: Metrics,
+        static_file_provider: StaticFileProvider,
     ) -> eyre::Result<()>
     where
         Metrics: DatabaseMetrics + 'static + Send + Sync,
@@ -596,6 +613,7 @@ impl NodeConfig {
                 listen_addr,
                 prometheus_handle,
                 db,
+                static_file_provider,
                 metrics_process::Collector::default(),
             )
             .await?;
@@ -618,8 +636,19 @@ impl NodeConfig {
         C: BlockReader + HeaderProvider + Clone + Unpin + 'static,
         Pool: TransactionPool + Unpin + 'static,
     {
-        let (handle, network, txpool, eth) =
-            builder.transactions(pool).request_handler(client).split_with_handle();
+        let (handle, network, txpool, eth) = builder
+            .transactions(
+                pool, // Configure transactions manager
+                TransactionsManagerConfig {
+                    transaction_fetcher_config: TransactionFetcherConfig::new(
+                        self.network.soft_limit_byte_size_pooled_transactions_response,
+                        self.network
+                            .soft_limit_byte_size_pooled_transactions_response_on_pack_request,
+                    ),
+                },
+            )
+            .request_handler(client)
+            .split_with_handle();
 
         task_executor.spawn_critical("p2p txpool", txpool);
         task_executor.spawn_critical("p2p eth request handler", eth);
@@ -718,15 +747,15 @@ impl NodeConfig {
     }
 
     /// Builds the [NetworkConfig] with the given [ProviderFactory].
-    pub fn load_network_config<DB: Database>(
+    pub fn load_network_config<C>(
         &self,
         config: &Config,
-        provider_factory: ProviderFactory<DB>,
+        client: C,
         executor: TaskExecutor,
         head: Head,
         secret_key: SecretKey,
         default_peers_path: PathBuf,
-    ) -> NetworkConfig<ProviderFactory<DB>> {
+    ) -> NetworkConfig<C> {
         let cfg_builder = self
             .network
             .network_config(config, self.chain.clone(), secret_key, default_peers_path)
@@ -743,15 +772,7 @@ impl NodeConfig {
                 self.network.port + self.instance - 1,
             )));
 
-        // When `sequencer_endpoint` is configured, the node will forward all transactions to a
-        // Sequencer node for execution and inclusion on L1, and disable its own txpool
-        // gossip to prevent other parties in the network from learning about them.
-        #[cfg(feature = "optimism")]
-        let cfg_builder = cfg_builder
-            .sequencer_endpoint(self.rollup.sequencer_http.clone())
-            .disable_tx_gossip(self.rollup.disable_txpool_gossip);
-
-        cfg_builder.build(provider_factory)
+        cfg_builder.build(client)
     }
 
     /// Builds the [Pipeline] with the given [ProviderFactory] and downloaders.
@@ -767,13 +788,14 @@ impl NodeConfig {
         continuous: bool,
         metrics_tx: reth_stages::MetricEventsSender,
         prune_config: Option<PruneConfig>,
+        static_file_producer: StaticFileProducer<DB>,
         evm_config: EvmConfig,
     ) -> eyre::Result<Pipeline<DB>>
     where
         DB: Database + Clone + 'static,
         H: HeaderDownloader + 'static,
         B: BodyDownloader + 'static,
-        EvmConfig: EvmEnvConfig + Clone + 'static,
+        EvmConfig: ConfigureEvm + Clone + 'static,
     {
         let mut builder = Pipeline::builder();
 
@@ -783,7 +805,6 @@ impl NodeConfig {
         }
 
         let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
-        use revm_inspectors::stack::InspectorStackConfig;
         let factory = reth_revm::EvmProcessorFactory::new(self.chain.clone(), evm_config);
 
         let stack_config = InspectorStackConfig {
@@ -817,10 +838,6 @@ impl NodeConfig {
                     body_downloader,
                     factory.clone(),
                 )
-                .set(
-                    TotalDifficultyStage::new(consensus)
-                        .with_commit_threshold(stage_config.total_difficulty.commit_threshold),
-                )
                 .set(SenderRecoveryStage {
                     commit_threshold: stage_config.sender_recovery.commit_threshold,
                 })
@@ -852,7 +869,7 @@ impl NodeConfig {
                 ))
                 .set(MerkleStage::new_execution(stage_config.merkle.clean_threshold))
                 .set(TransactionLookupStage::new(
-                    stage_config.transaction_lookup.commit_threshold,
+                    stage_config.transaction_lookup.chunk_size,
                     prune_modes.transaction_lookup,
                 ))
                 .set(IndexAccountHistoryStage::new(
@@ -864,7 +881,7 @@ impl NodeConfig {
                     prune_modes.storage_history,
                 )),
             )
-            .build(provider_factory);
+            .build(provider_factory, static_file_producer);
 
         Ok(pipeline)
     }
@@ -887,7 +904,6 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         Self {
-            database: DatabaseBuilder::default(),
             config: None,
             chain: MAINNET.clone(),
             metrics: None,
@@ -901,8 +917,6 @@ impl Default for NodeConfig {
             db: DatabaseArgs::default(),
             dev: DevArgs::default(),
             pruning: PruningArgs::default(),
-            #[cfg(feature = "optimism")]
-            rollup: crate::args::RollupArgs::default(),
         }
     }
 }
