@@ -1852,13 +1852,13 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
     fn changed_storages_with_range_with_content_1(
         &self,
         range: RangeInclusive<BlockNumber>
-    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>> {
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>> {
         let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
         
         let result = self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(AHashMap::new(), |mut accounts: AHashMap<Address, AHashMap<B256, StorageEntry>>, entry| -> ProviderResult<_> {
+            .try_fold(HashMap::new(), |mut accounts: HashMap<Address, HashMap<B256, StorageEntry>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 let storage_content = plain_storage
                     .seek_by_key_subkey(entry_address, storage_entry.key)?
@@ -1876,21 +1876,21 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
     fn changed_storages_with_range_with_content_2(
         &self,
         range: RangeInclusive<BlockNumber>
-    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>> {
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>> {
         let changes = self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(AHashMap::new(), |mut acc: AHashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
+            .try_fold(HashMap::new(), |mut acc: HashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 acc.entry(entry_address).or_default().push(storage_entry.key);
                 Ok(acc)
             })?;
 
         let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
-        let mut result = AHashMap::new();
+        let mut result = HashMap::new();
 
         for (address, keys) in changes {
-            let mut storage_map = AHashMap::new();
+            let mut storage_map = HashMap::new();
             for key in keys {
                 let storage_content = plain_storage
                     .seek_by_key_subkey(address, key)?
@@ -1910,7 +1910,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         address: Address,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>> {
         self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
             .try_fold(BTreeMap::new(), |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
@@ -1927,7 +1927,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         addresses: Vec<Address>,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>> {
         self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
             .try_fold(BTreeMap::new(), |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
@@ -1941,14 +1941,14 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
     fn changed_storages_with_range_by_addresses_with_content_1(
         &self,
         range: RangeInclusive<BlockNumber>,
-        addresses: AHashSet<Address>,
-    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>> {
+        addresses: HashSet<Address>,
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>> {
         let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
         
         let result = self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(AHashMap::new(), |mut accounts: AHashMap<Address, AHashMap<B256, StorageEntry>>, entry| -> ProviderResult<_> {
+            .try_fold(HashMap::new(), |mut accounts: HashMap<Address, HashMap<B256, StorageEntry>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
                     let storage_content = plain_storage
@@ -1968,12 +1968,12 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
     fn changed_storages_with_range_by_addresses_with_content_2(
         &self,
         range: RangeInclusive<BlockNumber>,
-        addresses: AHashSet<Address>,
-    ) -> ProviderResult<AHashMap<Address, AHashMap<B256, StorageEntry>>> {
+        addresses: HashSet<Address>,
+    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>> {
         let changes = self.tx
-            .cursor_read::<tables::StorageChangeSet>()?
+            .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(AHashMap::new(), |mut acc: AHashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
+            .try_fold(HashMap::new(), |mut acc: HashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
                     acc.entry(entry_address).or_default().push(storage_entry.key);
@@ -1982,10 +1982,10 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
             })?;
 
         let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
-        let mut result = AHashMap::new();
+        let mut result = HashMap::new();
 
         for (address, keys) in changes {
-            let mut storage_map = AHashMap::new();
+            let mut storage_map = HashMap::new();
             for key in keys {
                 let storage_content = plain_storage
                     .seek_by_key_subkey(address, key)?
