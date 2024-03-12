@@ -543,7 +543,7 @@ where
         // but if all transactions are to be replayed, we can use the state at the block itself
         let num_txs = transaction_index.index().unwrap_or(block.body.len());
         if num_txs == block.body.len() {
-            at = block.hash;
+            at = block.hash();
             replay_block_txs = false;
         }
 
@@ -563,7 +563,7 @@ where
                     // Execute all transactions until index
                     for tx in transactions {
                         let tx = tx_env_with_recovered(&tx);
-                        let env = Env { cfg: cfg.clone(), block: block_env.clone(), tx };
+                        let env = EnvWithHandlerCfg::new_with_cfg_env(cfg.clone(), block_env.clone(), tx);
                         let (res, _) = transact(&mut db, env)?;
                         db.commit(res.state);
                     }
@@ -602,7 +602,7 @@ where
 
                         let initial = tx.access_list.take().unwrap_or_default();
 
-                        let precompiles = get_precompiles(env.cfg.spec_id);
+                        let precompiles = get_precompiles(env.handler_cfg.spec_id);
                         let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
                         let (res, _) = inspect(&mut db, env, &mut inspector)?;
                         let access_list = inspector.into_access_list();

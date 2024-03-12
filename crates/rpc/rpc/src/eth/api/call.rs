@@ -404,8 +404,8 @@ where
                 let (res, _) = inspect(&mut db, env, &mut inspector)?;
 
                 match res.result {
-                    ExecutionResult::Halt { reason, .. } => Err(match reason {
-                        Halt::NonceOverflow => RpcInvalidTransactionError::NonceMaxValue,
+                    ExecutionResult::HaltReason { reason, .. } => Err(match reason {
+                        HaltReason::NonceOverflow => RpcInvalidTransactionError::NonceMaxValue,
                         halt => RpcInvalidTransactionError::EvmHalt(halt),
                     }),
                     ExecutionResult::Revert { output, .. } => {

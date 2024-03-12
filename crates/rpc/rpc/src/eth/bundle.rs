@@ -107,12 +107,13 @@ where
             .spawn_with_state_at_block(at, move |state| {
                 let coinbase = block_env.coinbase;
                 let basefee = Some(block_env.basefee.to::<u64>());
-                let env = Env { cfg, block: block_env, tx: TxEnv::default() };
+                let env = EnvWithHandlerCfg::new_with_cfg_env(cfg, block_env, tx);
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
                 let initial_coinbase = DatabaseRef::basic_ref(&db, coinbase_addr)?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
+                
                 let mut coinbase_balance_before_tx = initial_coinbase;
                 let mut coinbase_balance_after_tx = initial_coinbase;
                 let mut total_gas_used = 0u64;
