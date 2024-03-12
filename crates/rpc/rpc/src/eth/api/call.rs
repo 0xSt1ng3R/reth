@@ -399,12 +399,12 @@ where
 
                 let initial = call.access_list.take().unwrap_or_default();
 
-                let precompiles = get_precompiles(env.cfg.spec_id);
+                let precompiles = get_precompiles(env.handler_cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
                 let (res, _) = inspect(&mut db, env, &mut inspector)?;
 
                 match res.result {
-                    ExecutionResult::HaltReason { reason, .. } => Err(match reason {
+                    ExecutionResult::Halt { reason, .. } => Err(match reason {
                         HaltReason::NonceOverflow => RpcInvalidTransactionError::NonceMaxValue,
                         halt => RpcInvalidTransactionError::EvmHalt(halt),
                     }),

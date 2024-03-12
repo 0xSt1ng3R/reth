@@ -532,7 +532,7 @@ where
 
         let opts = opts.unwrap_or_default();
         let block = block.ok_or_else(|| EthApiError::UnknownBlockNumber)?;
-        let GethDebugTracingCallOptions { tracing_options, mut state_overrides, .. } = opts;
+        let GethDebugTracingCallOptions { _tracing_options, mut state_overrides, .. } = opts;
         let gas_limit = self.inner.eth_api.call_gas_limit();
 
         // we're essentially replaying the transactions in the block here, hence we need the state
@@ -547,7 +547,8 @@ where
             replay_block_txs = false;
         }
 
-        let this = self.clone();
+        // let this = self.clone();
+
         self.inner
             .eth_api
             .spawn_with_state_at_block(at.into(), move |state| {
