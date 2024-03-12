@@ -1,4 +1,3 @@
-latest file
 //! `Eth` bundle implementation and helpers.
 
 use crate::eth::{
