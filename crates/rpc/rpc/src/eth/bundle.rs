@@ -106,8 +106,8 @@ where
             .eth_api
             .spawn_with_state_at_block(at, move |state| {
                 let coinbase_addr = coinbase.unwrap_or(block_env.coinbase);
-                // let coinbase = block_env.coinbase;
-                // let basefee = Some(block_env.basefee.to::<u64>());
+                let coinbase = block_env.coinbase;
+                let basefee = Some(block_env.basefee.to::<u64>());
                 let env = EnvWithHandlerCfg::new_with_cfg_env(cfg, block_env, TxEnv::default());
                 let db = CacheDB::new(StateProviderDatabase::new(state));
 
