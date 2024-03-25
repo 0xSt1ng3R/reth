@@ -385,7 +385,7 @@ impl StaticFileProvider {
                             })
                             .or_insert_with(|| BTreeMap::from([(tx_end, current_block_range)]));
                     }
-                } else if let Some(1) = tx_index.get(&segment).map(|index| index.len()) {
+                } else if tx_index.get(&segment).map(|index| index.len()) == Some(1) {
                     // Only happens if we unwind all the txs/receipts from the first static file.
                     // Should only happen in test scenarios.
                     if jar.user_header().expected_block_start() == 0 &&
@@ -1008,15 +1008,6 @@ impl TransactionsProvider for StaticFileProvider {
         Err(ProviderError::UnsupportedProvider)
     }
 
-    fn senders_by_tx_range(
-        &self,
-        range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Address>> {
-        let txes = self.transactions_by_tx_range(range)?;
-        TransactionSignedNoHash::recover_signers(&txes, txes.len())
-            .ok_or(ProviderError::SenderRecoveryError)
-    }
-
     fn transactions_by_tx_range(
         &self,
         range: impl RangeBounds<TxNumber>,
@@ -1029,6 +1020,15 @@ impl TransactionsProvider for StaticFileProvider {
             },
             |_| true,
         )
+    }
+
+    fn senders_by_tx_range(
+        &self,
+        range: impl RangeBounds<TxNumber>,
+    ) -> ProviderResult<Vec<Address>> {
+        let txes = self.transactions_by_tx_range(range)?;
+        TransactionSignedNoHash::recover_signers(&txes, txes.len())
+            .ok_or(ProviderError::SenderRecoveryError)
     }
 
     fn transaction_sender(&self, id: TxNumber) -> ProviderResult<Option<Address>> {
