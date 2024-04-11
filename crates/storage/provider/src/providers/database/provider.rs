@@ -2025,14 +2025,17 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: HashSet<Address>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>> {
+    ) -> ProviderResult<HashMap<Address, (u64, HashMap<B256, StorageEntry>)>> {
         let changes = self.tx
             .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(HashMap::new(), |mut acc: HashMap<Address, Vec<B256>>, entry| -> ProviderResult<_> {
-                let (BlockNumberAddress((_, entry_address)), storage_entry) = entry?;
+            .try_fold(HashMap::new(), |mut acc: HashMap<Address, (u64, Vec<B256>)>, entry| -> ProviderResult<_> {
+                let (BlockNumberAddress((block_number, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
-                    acc.entry(entry_address).or_default().push(storage_entry.key);
+                    acc.entry(entry_address)
+                        .or_insert((block_number, Vec::new()))
+                        .1
+                        .push(storage_entry.key);
                 }
                 Ok(acc)
             })?;
@@ -2040,7 +2043,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
         let mut result = HashMap::new();
 
-        for (address, keys) in changes {
+        for (address, (block_number, keys)) in changes {
             let mut storage_map = HashMap::new();
             for key in keys {
                 let storage_content = plain_storage
@@ -2049,7 +2052,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
                     .unwrap_or_else(|| StorageEntry { key, value: Default::default() });
                 storage_map.insert(key, storage_content);
             }
-            result.insert(address, storage_map);
+            result.insert(address, (block_number, storage_map));
         }
 
         Ok(result)
