@@ -94,6 +94,16 @@ pub const DEFAULT_DISCOVERY_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Note: the default TCP port is the same.
 pub const DEFAULT_DISCOVERY_PORT: u16 = 30303;
 
+/// The default address for discv5 via UDP.
+///
+/// Note: the default TCP address is the same.
+pub const DEFAULT_DISCOVERY_V5_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+
+/// The default port for discv5 via UDP.
+///
+/// Default is port 9000.
+pub const DEFAULT_DISCOVERY_V5_PORT: u16 = 9000;
+
 /// The default address for discv4 via UDP: "0.0.0.0:30303"
 ///
 /// Note: The default TCP address is the same.
@@ -201,14 +211,14 @@ impl Discv4 {
     /// # use std::io;
     /// use rand::thread_rng;
     /// use reth_discv4::{Discv4, Discv4Config};
-    /// use reth_primitives::{NodeRecord, PeerId};
+    /// use reth_primitives::{pk2id, NodeRecord, PeerId};
     /// use secp256k1::SECP256K1;
     /// use std::{net::SocketAddr, str::FromStr};
     /// # async fn t() -> io::Result<()> {
     /// // generate a (random) keypair
     /// let mut rng = thread_rng();
     /// let (secret_key, pk) = SECP256K1.generate_keypair(&mut rng);
-    /// let id = PeerId::from_slice(&pk.serialize_uncompressed()[1..]);
+    /// let id = pk2id(&pk);
     ///
     /// let socket = SocketAddr::from_str("0.0.0.0:0").unwrap();
     /// let local_enr =
@@ -1389,7 +1399,7 @@ impl Discv4Service {
 
     fn evict_expired_requests(&mut self, now: Instant) {
         self.pending_enr_requests.retain(|_node_id, enr_request| {
-            now.duration_since(enr_request.sent_at) < self.config.ping_expiration
+            now.duration_since(enr_request.sent_at) < self.config.enr_expiration
         });
 
         let mut failed_pings = Vec::new();
@@ -1567,8 +1577,7 @@ impl Discv4Service {
             }
 
             // re-ping some peers
-            if self.ping_interval.poll_tick(cx).is_ready() {
-                let _ = self.ping_interval.poll_tick(cx);
+            while self.ping_interval.poll_tick(cx).is_ready() {
                 self.re_ping_oldest();
             }
 
@@ -1688,7 +1697,7 @@ impl Discv4Service {
             // try resending buffered pings
             self.ping_buffered();
 
-            // evict expired nodes
+            // evict expired requests
             while self.evict_expired_requests_interval.poll_tick(cx).is_ready() {
                 self.evict_expired_requests(Instant::now());
             }
@@ -2259,12 +2268,27 @@ mod tests {
         let local_addr = service.local_addr();
 
         let mut num_inserted = 0;
-        for _ in 0..MAX_NODES_PING {
+        loop {
             let node = NodeRecord::new(local_addr, PeerId::random());
             if service.add_node(node) {
                 num_inserted += 1;
                 assert!(service.pending_pings.contains_key(&node.id));
                 assert_eq!(service.pending_pings.len(), num_inserted);
+                if num_inserted == MAX_NODES_PING {
+                    break;
+                }
+            }
+        }
+
+        // `pending_pings` is full, insert into `queued_pings`.
+        num_inserted = 0;
+        for _ in 0..MAX_NODES_PING {
+            let node = NodeRecord::new(local_addr, PeerId::random());
+            if service.add_node(node) {
+                num_inserted += 1;
+                assert!(!service.pending_pings.contains_key(&node.id));
+                assert_eq!(service.pending_pings.len(), MAX_NODES_PING);
+                assert_eq!(service.queued_pings.len(), num_inserted);
             }
         }
     }

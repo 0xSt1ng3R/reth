@@ -41,6 +41,9 @@ reth-prune.workspace = true
 reth-blockchain-tree.workspace = true
 reth-static-file.workspace = true
 
+# ethereum
+discv5.workspace = true
+
 # async
 tokio.workspace = true
 
@@ -100,8 +103,6 @@ optimism = [
     "reth-rpc/optimism",
     "reth-rpc-engine-api/optimism",
     "reth-provider/optimism",
-    "reth-network/optimism",
-    "reth-network-api/optimism",
     "reth-rpc-types-compat/optimism",
     "reth-auto-seal-consensus/optimism",
     "reth-consensus-common/optimism",

@@ -7,10 +7,9 @@ use crate::{
     net::{goerli_nodes, mainnet_nodes, sepolia_nodes},
     proofs::state_root_ref_unhashed,
     revm_primitives::{address, b256},
-    Address, BlockNumber, ForkFilter, ForkFilterKey, ForkHash, ForkId, Genesis, Hardfork, Head,
-    Header, NodeRecord, SealedHeader, B256, EMPTY_OMMER_ROOT_HASH, U256,
+    Address, BlockNumber, Chain, ForkFilter, ForkFilterKey, ForkHash, ForkId, Genesis, Hardfork,
+    Head, Header, NamedChain, NodeRecord, SealedHeader, B256, EMPTY_OMMER_ROOT_HASH, U256,
 };
-use alloy_chains::{Chain, NamedChain};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -608,7 +607,7 @@ impl ChainSpec {
             if self.is_cancun_active_at_timestamp(self.genesis.timestamp) {
                 let blob_gas_used = self.genesis.blob_gas_used.unwrap_or(0);
                 let excess_blob_gas = self.genesis.excess_blob_gas.unwrap_or(0);
-                (Some(B256::ZERO), Some(blob_gas_used), Some(excess_blob_gas))
+                (Some(B256::ZERO), Some(blob_gas_used as u64), Some(excess_blob_gas as u64))
             } else {
                 (None, None, None)
             };
@@ -620,7 +619,7 @@ impl ChainSpec {
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
             receipts_root: EMPTY_RECEIPTS,
             logs_bloom: Default::default(),
-            gas_limit: self.genesis.gas_limit,
+            gas_limit: self.genesis.gas_limit as u64,
             difficulty: self.genesis.difficulty,
             nonce: self.genesis.nonce,
             extra_data: self.genesis.extra_data.clone(),
@@ -645,7 +644,8 @@ impl ChainSpec {
     /// Get the initial base fee of the genesis block.
     pub fn initial_base_fee(&self) -> Option<u64> {
         // If the base fee is set in the genesis block, we use that instead of the default.
-        let genesis_base_fee = self.genesis.base_fee_per_gas.unwrap_or(EIP1559_INITIAL_BASE_FEE);
+        let genesis_base_fee =
+            self.genesis.base_fee_per_gas.map(|fee| fee as u64).unwrap_or(EIP1559_INITIAL_BASE_FEE);
 
         // If London is activated at genesis, we set the initial base fee as per EIP-1559.
         self.fork(Hardfork::London).active_at_block(0).then_some(genesis_base_fee)
@@ -736,6 +736,13 @@ impl ChainSpec {
     #[inline]
     pub fn cancun_fork_id(&self) -> Option<ForkId> {
         self.hardfork_fork_id(Hardfork::Cancun)
+    }
+
+    /// Convenience method to get the latest fork id from the chainspec. Panics if chainspec has no
+    /// hardforks.
+    #[inline]
+    pub fn latest_fork_id(&self) -> ForkId {
+        self.hardfork_fork_id(*self.hardforks().last_key_value().unwrap().0).unwrap()
     }
 
     /// Get the fork condition for the given fork.
@@ -2978,7 +2985,7 @@ Post-merge hard forks (timestamp based):
 
     #[test]
     fn test_paris_block_and_total_difficulty() {
-        let genesis = Genesis { gas_limit: 0x2fefd8u64, ..Default::default() };
+        let genesis = Genesis { gas_limit: 0x2fefd8u128, ..Default::default() };
         let paris_chainspec = ChainSpecBuilder::default()
             .chain(Chain::from_id(1337))
             .genesis(genesis)
@@ -2990,7 +2997,7 @@ Post-merge hard forks (timestamp based):
     #[test]
     fn test_default_cancun_header_forkhash() {
         // set the gas limit from the hive test genesis according to the hash
-        let genesis = Genesis { gas_limit: 0x2fefd8u64, ..Default::default() };
+        let genesis = Genesis { gas_limit: 0x2fefd8u128, ..Default::default() };
         let default_chainspec = ChainSpecBuilder::default()
             .chain(Chain::from_id(1337))
             .genesis(genesis)
@@ -3157,5 +3164,22 @@ Post-merge hard forks (timestamp based):
             genesis.next_block_base_fee(OP_SEPOLIA.base_fee_params(genesis.timestamp)).unwrap();
         // <https://optimism-sepolia.blockscout.com/block/1>
         assert_eq!(base_fee, 980000000);
+    }
+
+    #[test]
+    fn latest_eth_mainnet_fork_id() {
+        assert_eq!(
+            ForkId { hash: ForkHash([0x9f, 0x3d, 0x22, 0x54]), next: 0 },
+            MAINNET.latest_fork_id()
+        )
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn latest_op_mainnet_fork_id() {
+        assert_eq!(
+            ForkId { hash: ForkHash([0x51, 0xcc, 0x98, 0xb3]), next: 0 },
+            BASE_MAINNET.latest_fork_id()
+        )
     }
 }

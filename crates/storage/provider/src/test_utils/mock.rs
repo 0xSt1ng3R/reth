@@ -7,8 +7,8 @@ use crate::{
 };
 use parking_lot::Mutex;
 use reth_db::models::{AccountBeforeTx, StoredBlockBodyIndices};
+use reth_evm::ConfigureEvmEnv;
 use reth_interfaces::provider::{ProviderError, ProviderResult};
-use reth_node_api::ConfigureEvmEnv;
 use reth_primitives::{
     keccak256, trie::AccountProof, Account, Address, Block, BlockHash, BlockHashOrNumber, BlockId,
     BlockNumber, BlockWithSenders, Bytecode, Bytes, ChainInfo, ChainSpec, Header, Receipt,
@@ -247,6 +247,7 @@ impl TransactionsProvider for MockEthProvider {
                         block_number: block.header.number,
                         base_fee: block.header.base_fee_per_gas,
                         excess_blob_gas: block.header.excess_blob_gas,
+                        timestamp: block.header.timestamp,
                     };
                     return Ok(Some((tx.clone(), meta)))
                 }
@@ -626,39 +627,6 @@ impl EvmEnvProvider for MockEthProvider {
 }
 
 impl StateProviderFactory for MockEthProvider {
-    fn latest(&self) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn history_by_block_number(&self, _block: BlockNumber) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn history_by_block_hash(&self, _block: BlockHash) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn state_by_block_hash(&self, _block: BlockHash) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn pending(&self) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn pending_state_by_hash(&self, _block_hash: B256) -> ProviderResult<Option<StateProviderBox>> {
-        Ok(Some(Box::new(self.clone())))
-    }
-
-    fn pending_with_provider<'a>(
-        &'a self,
-        _bundle_state_data: Box<dyn BundleStateDataProvider + 'a>,
-    ) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-}
-
-impl StateProviderFactory for Arc<MockEthProvider> {
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         Ok(Box::new(self.clone()))
     }

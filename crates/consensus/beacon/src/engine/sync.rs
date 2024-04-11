@@ -158,14 +158,6 @@ where
     /// If the `count` is 1, this will use the `download_full_block` method instead, because it
     /// downloads headers and bodies for the block concurrently.
     pub(crate) fn download_block_range(&mut self, hash: B256, count: u64) {
-        // notify listeners that we're downloading a block
-        self.listeners.notify(BeaconConsensusEngineEvent::LiveSyncProgress(
-            ConsensusEngineLiveSyncProgress::DownloadingBlocks {
-                remaining_blocks: count,
-                target: hash,
-            },
-        ));
-
         if count == 1 {
             self.download_full_block(hash);
         } else {
@@ -176,6 +168,13 @@ where
                 "start downloading full block range."
             );
 
+            // notify listeners that we're downloading a block range
+            self.listeners.notify(BeaconConsensusEngineEvent::LiveSyncProgress(
+                ConsensusEngineLiveSyncProgress::DownloadingBlocks {
+                    remaining_blocks: count,
+                    target: hash,
+                },
+            ));
             let request = self.full_block_client.get_full_block_range(hash, count);
             self.inflight_block_range_requests.push(request);
         }
@@ -215,7 +214,13 @@ where
     }
 
     /// Sets a new target to sync the pipeline to.
+    ///
+    /// But ensures the target is not the zero hash.
     pub(crate) fn set_pipeline_sync_target(&mut self, target: B256) {
+        if target.is_zero() {
+            // precaution to never sync to the zero hash
+            return
+        }
         self.pending_pipeline_target = Some(target);
     }
 

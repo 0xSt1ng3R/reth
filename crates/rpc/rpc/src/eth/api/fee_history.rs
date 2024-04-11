@@ -7,8 +7,9 @@ use futures::{
 };
 use metrics::atomics::AtomicU64;
 use reth_primitives::{
+    basefee::calculate_next_block_base_fee,
     eip4844::{calc_blob_gasprice, calculate_excess_blob_gas},
-    Receipt, SealedBlock, TransactionSigned, B256, U256,
+    ChainSpec, Receipt, SealedBlock, TransactionSigned, B256,
 };
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, ChainSpecProvider};
 use reth_rpc_types::TxGasAndReward;
@@ -266,7 +267,7 @@ pub(crate) fn calculate_reward_percentiles_for_block(
     base_fee_per_gas: u64,
     transactions: &[TransactionSigned],
     receipts: &[Receipt],
-) -> Result<Vec<U256>, EthApiError> {
+) -> Result<Vec<u128>, EthApiError> {
     let mut transactions = transactions
         .iter()
         .zip(receipts)
@@ -300,7 +301,7 @@ pub(crate) fn calculate_reward_percentiles_for_block(
     for percentile in percentiles {
         // Empty blocks should return in a zero row
         if transactions.is_empty() {
-            rewards_in_block.push(U256::ZERO);
+            rewards_in_block.push(0);
             continue
         }
 
@@ -309,7 +310,7 @@ pub(crate) fn calculate_reward_percentiles_for_block(
             tx_index += 1;
             cumulative_gas_used += transactions[tx_index].gas_used;
         }
-        rewards_in_block.push(U256::from(transactions[tx_index].reward));
+        rewards_in_block.push(transactions[tx_index].reward);
     }
 
     Ok(rewards_in_block)
@@ -326,7 +327,9 @@ pub struct FeeHistoryEntry {
     /// For pre EIP-4844 equals to zero.
     pub base_fee_per_blob_gas: Option<u128>,
     /// Blob gas used ratio for this block.
-    /// Calculated as the ratio pf gasUsed and gasLimit.
+    ///
+    /// Calculated as the ratio of blob gas used and the available blob data gas per block.
+    /// Will be zero if no blob gas was used or pre EIP-4844.
     pub blob_gas_used_ratio: f64,
     /// The excess blob gas of the block.
     pub excess_blob_gas: Option<u64>,
@@ -340,7 +343,9 @@ pub struct FeeHistoryEntry {
     /// Hash of the block.
     pub header_hash: B256,
     /// Approximated rewards for the configured percentiles.
-    pub rewards: Vec<U256>,
+    pub rewards: Vec<u128>,
+    /// The timestamp of the block.
+    pub timestamp: u64,
 }
 
 impl FeeHistoryEntry {
@@ -360,7 +365,18 @@ impl FeeHistoryEntry {
             header_hash: block.hash(),
             gas_limit: block.gas_limit,
             rewards: Vec::new(),
+            timestamp: block.timestamp,
         }
+    }
+
+    /// Returns the base fee for the next block according to the EIP-1559 spec.
+    pub fn next_block_base_fee(&self, chain_spec: &ChainSpec) -> u64 {
+        calculate_next_block_base_fee(
+            self.gas_used,
+            self.gas_limit,
+            self.base_fee_per_gas,
+            chain_spec.base_fee_params(self.timestamp),
+        )
     }
 
     /// Returns the blob fee for the next block according to the EIP-4844 spec.
