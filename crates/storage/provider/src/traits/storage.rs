@@ -58,7 +58,7 @@ pub trait StorageReader: Send + Sync {
         &self,
         range: RangeInclusive<BlockNumber>,
         addresses: HashSet<Address>,
-    ) -> ProviderResult<HashMap<Address, HashMap<B256, StorageEntry>>>;
+    ) -> ProviderResult<HashMap<Address, (u64, HashMap<B256, StorageEntry>)>>;
 
     /// Iterate over storage changesets and return all storage slots that were changed alongside
     /// each specific set of blocks.
