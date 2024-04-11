@@ -419,7 +419,7 @@ where
 
                 let precompiles = get_precompiles(env.handler_cfg.spec_id);
                 let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                let (res, _) = this.inner.eth_api.inspect(&mut db, env, &mut inspector)?;
+                let (res, _) = this.inspect(&mut db, env, &mut inspector)?;
 
                 match res.result {
                     ExecutionResult::Halt { reason, .. } => Err(match reason {
@@ -438,7 +438,7 @@ where
                 let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
                 _env.cfg.disable_block_gas_limit = true;
                 _env.cfg.disable_base_fee = true;
-                let (res0, _) = this.inner.eth_api.transact(&mut db, _env)?;
+                let (res0, _) = this.transact(&mut db, _env)?;
                 let gas_used = U256::from(res0.result.gas_used());
 
                 access_lists.push(AccessListWithGasUsed { access_list, gas_used });
