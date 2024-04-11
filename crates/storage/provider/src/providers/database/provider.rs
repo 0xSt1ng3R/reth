@@ -2091,12 +2091,13 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
         let changes = self.tx
             .cursor_read::<tables::StorageChangeSets>()?
             .walk_range(BlockNumberAddress::range(range))?
-            .try_fold(HashMap::new(), |mut acc: HashMap<Address, (u64, u64, Vec<B256>)>, entry| -> ProviderResult<_> {
+            .try_fold(HashMap::new(), |mut acc: HashMap<Address, (Option<u64>, Option<u64>, Vec<B256>)>, entry| -> ProviderResult<_> {
                 let (BlockNumberAddress((block_number, entry_address)), storage_entry) = entry?;
                 if addresses.contains(&entry_address) {
-                    let (first_block_number, _, keys) = acc.entry(entry_address)
-                        .or_insert((block_number, block_number, Vec::new()));
-                    *first_block_number = (*first_block_number).min(block_number);
+                    let (first_block_number, last_block_number, keys) = acc.entry(entry_address)
+                        .or_insert((None, None, Vec::new()));
+                    *first_block_number = first_block_number.map(|n| n.min(block_number)).or(Some(block_number));
+                    *last_block_number = Some(block_number);
                     keys.push(storage_entry.key);
                 }
                 Ok(acc)
@@ -2114,7 +2115,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
                     .unwrap_or_else(|| StorageEntry { key, value: Default::default() });
                 storage_map.insert(key, storage_content);
             }
-            result.insert(address, ((first_block_number, last_block_number), storage_map));
+            result.insert(address, ((first_block_number.unwrap_or(0), last_block_number.unwrap_or(0)), storage_map));
         }
 
         Ok(result)
