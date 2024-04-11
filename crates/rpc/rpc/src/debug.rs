@@ -564,7 +564,7 @@ where
             replay_block_txs = false;
         }
 
-        // let this = self.clone();
+        let this = self.clone();
 
         self.inner
             .eth_api
@@ -582,7 +582,7 @@ where
                     for tx in transactions {
                         let tx = tx_env_with_recovered(&tx);
                         let env = EnvWithHandlerCfg::new_with_cfg_env(cfg.clone(), block_env.clone(), tx);
-                        let (res, _) = transact(&mut db, env)?;
+                        let (res, _) = this.inner.eth_api.transact(&mut db, env)?;
                         db.commit(res.state);
                     }
                 }
@@ -622,7 +622,7 @@ where
 
                         let precompiles = get_precompiles(env.handler_cfg.spec_id);
                         let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                        let (res, _) = inspect(&mut db, env, &mut inspector)?;
+                        let (res, _) = this.inner.eth_api.inspect(&mut db, env, &mut inspector)?;
                         let access_list = inspector.into_access_list();
 
                         // If there is more transactions, commit the database
