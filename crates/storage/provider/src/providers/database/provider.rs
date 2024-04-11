@@ -2096,7 +2096,7 @@ impl<TX: DbTx> StorageReader for DatabaseProvider<TX> {
                 if addresses.contains(&entry_address) {
                     let (first_block_number, last_block_number, keys) = acc.entry(entry_address)
                         .or_insert((block_number, block_number, Vec::new()));
-                    *first_block_number = first_block_number.min(block_number);
+                    *first_block_number = (*first_block_number).min(block_number);
                     *last_block_number = block_number;
                     keys.push(storage_entry.key);
                 }
