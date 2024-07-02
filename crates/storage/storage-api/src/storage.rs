@@ -7,8 +7,6 @@ use std::{
 use std::collections::{HashSet, HashMap};
 
 use auto_impl::auto_impl;
-use reth_interfaces::provider::ProviderResult;
-use reth_primitives::{Address, BlockNumber, StorageEntry, B256};
 
 /// Storage reader
 #[auto_impl::auto_impl(&, Arc, Box)]

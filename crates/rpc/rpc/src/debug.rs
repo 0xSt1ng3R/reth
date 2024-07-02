@@ -7,7 +7,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_evm::ConfigureEvmEnv;
 use reth_primitives::{
     Address, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSignedEcRecovered, Withdrawals,
-    B256, U256,
+    B256, U256, TxKind
 };
 use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider, HeaderProvider, StateProviderFactory,
@@ -37,8 +37,8 @@ use revm_inspectors::tracing::{
 };
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 
-use crate::eth::revm_utils::get_precompiles;
-use reth_revm::{access_list::AccessListInspector};
+use reth_rpc_eth_types::revm_utils::get_precompiles;
+use revm_inspectors::access_list::AccessListInspector;
 
 use revm::DatabaseRef;
 
@@ -546,7 +546,7 @@ where
         opts: Option<GethDebugTracingCallOptions>,
     ) -> EthResult<Vec<Vec<AccessList>>> {
         if bundles.is_empty() {
-            return Err(EthApiError::InvalidParams(String::from("bundles are empty.")))
+            return Err(EthApiError::InvalidParams("bundles are empty".to_string()))
         }
 
         let StateContext { transaction_index, block_number } = state_context.unwrap_or_default();
@@ -555,12 +555,12 @@ where
         let target_block = block_number.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let ((cfg, block_env, _), block) = futures::try_join!(
             self.inner.eth_api.evm_env_at(target_block),
-            self.inner.eth_api.block_by_id_with_senders(target_block),
+            self.inner.eth_api.block_with_senders(target_block),
         )?;
 
         let opts = opts.unwrap_or_default();
         let block = block.ok_or_else(|| EthApiError::UnknownBlockNumber)?;
-        let GethDebugTracingCallOptions { tracing_options, mut state_overrides, .. } = opts;
+        let GethDebugTracingCallOptions { tracing_options: _, mut state_overrides, .. } = opts;
         let gas_limit = self.inner.eth_api.call_gas_limit();
 
         // we're essentially replaying the transactions in the block here, hence we need the state
@@ -577,78 +577,76 @@ where
 
         let this = self.clone();
 
-        self.inner
-            .eth_api
-            .spawn_with_state_at_block(at.into(), move |state| {
-                // the outer vec for the bundles
-                let mut all_bundles = Vec::with_capacity(bundles.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
+        self.inner.eth_api.spawn_with_state_at_block(at.into(), move |state| {
+            // the outer vec for the bundles
+            let mut all_bundles = Vec::with_capacity(bundles.len());
+            let mut db = CacheDB::new(StateProviderDatabase::new(state));
 
-                if replay_block_txs {
-                    // only need to replay the transactions in the block if not all transactions are
-                    // to be replayed
-                    let transactions = block.into_transactions_ecrecovered().take(num_txs);
+            if replay_block_txs {
+                // only need to replay the transactions in the block if not all transactions are
+                // to be replayed
+                let transactions = block.into_transactions_ecrecovered().take(num_txs);
 
-                    // Execute all transactions until index
-                    for tx in transactions {
-                        let tx = tx_env_with_recovered(&tx);
-                        let env = EnvWithHandlerCfg::new_with_cfg_env(cfg.clone(), block_env.clone(), tx);
-                        let (res, _) = this.inner.eth_api.transact(&mut db, env)?;
+                // Execute all transactions until index
+                for tx in transactions {
+                    let env = EnvWithHandlerCfg::new_with_cfg_env(
+                        cfg.clone(),
+                        block_env.clone(),
+                        Call::evm_config(this.eth_api()).tx_env(&tx),
+                    );
+                    let (res, _) = this.inner.eth_api.transact(&mut db, env)?;
+                    db.commit(res.state);
+                }
+            }
+
+            // Process all bundles
+            let mut bundles = bundles.into_iter().peekable();
+            while let Some(bundle) = bundles.next() {
+                let mut results = Vec::with_capacity(bundle.transactions.len());
+                let Bundle { transactions, block_override } = bundle;
+
+                let block_overrides = block_override.map(Box::new);
+
+                let mut transactions = transactions.into_iter().peekable();
+                while let Some(mut tx) = transactions.next() {
+                    // apply state overrides only once, before the first transaction
+                    let state_overrides = state_overrides.take();
+                    let overrides = EvmOverrides::new(state_overrides, block_overrides.clone());
+
+                    let env = prepare_call_env(
+                        cfg.clone(),
+                        block_env.clone(),
+                        tx.clone(),
+                        gas_limit,
+                        &mut db,
+                        overrides,
+                    )?;
+
+                    let from = tx.from.unwrap_or_default();
+                    let to = tx.to.map(|addr| match addr {
+                        TxKind::Call(to) => to,
+                        TxKind::Create => Address::ZERO,
+                    });
+
+                    let initial = tx.access_list.take().unwrap_or_default();
+
+                    let precompiles = get_precompiles(env.handler_cfg.spec_id);
+                    let mut inspector = AccessListInspector::new(initial, from, to.unwrap_or_default(), precompiles);
+                    let (res, _) = this.inner.eth_api.inspect(&mut db, env, &mut inspector)?;
+                    let access_list = inspector.into_access_list();
+
+                    // If there are more transactions or bundles, commit to the database
+                    if transactions.peek().is_some() || bundles.peek().is_some() {
                         db.commit(res.state);
                     }
+                    results.push(access_list);
                 }
 
-                // Trace all bundles
-                let mut bundles = bundles.into_iter().peekable();
-                while let Some(bundle) = bundles.next() {
-                    let mut results = Vec::with_capacity(bundle.transactions.len());
-                    let Bundle { transactions, block_override } = bundle;
-
-                    let block_overrides = block_override.map(Box::new);
-
-                    let mut transactions = transactions.into_iter().peekable();
-                    while let Some(mut tx) = transactions.next() {
-                        // apply state overrides only once, before the first transaction
-                        let state_overrides = state_overrides.take();
-                        let overrides = EvmOverrides::new(state_overrides, block_overrides.clone());
-
-                        let env = prepare_call_env(
-                            cfg.clone(),
-                            block_env.clone(),
-                            tx.clone(),
-                            gas_limit,
-                            &mut db,
-                            overrides,
-                        )?;
-
-                        let from = tx.from.unwrap_or_default();
-                        let to = if let Some(to) = tx.to {
-                            to
-                        } else {
-                            let nonce = db.basic_ref(from)?.unwrap_or_default().nonce;
-                            from.create(nonce)
-                        };
-
-                        let initial = tx.access_list.take().unwrap_or_default();
-
-                        let precompiles = get_precompiles(env.handler_cfg.spec_id);
-                        let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
-                        let (res, _) = this.inner.eth_api.inspect(&mut db, env, &mut inspector)?;
-                        let access_list = inspector.into_access_list();
-
-                        // If there is more transactions, commit the database
-                        // If there is no transactions, but more bundles, commit to the database too
-                        if transactions.peek().is_some() || bundles.peek().is_some() {
-                            db.commit(res.state);
-                        }
-                        results.push(access_list);
-                    }
-
-                    all_bundles.push(results);
-                }
-                Ok(all_bundles)
-            })
-            .await
+                all_bundles.push(results);
+            }
+            Ok(all_bundles)
+        })
+        .await
     }
 
     /// Executes the configured transaction with the environment on the given database.
