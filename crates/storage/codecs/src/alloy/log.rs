@@ -1,3 +1,5 @@
+//! Native Compact codec impl for primitive alloy log types.
+
 use crate::Compact;
 use alloy_primitives::{Address, Bytes, Log, LogData};
 use bytes::BufMut;
@@ -8,20 +10,19 @@ impl Compact for LogData {
     where
         B: BufMut + AsMut<[u8]>,
     {
-        let mut buffer = bytes::BytesMut::new();
+        let mut buffer = Vec::new();
         let (topics, data) = self.split();
         topics.specialized_to_compact(&mut buffer);
         data.to_compact(&mut buffer);
-        let total_length = buffer.len();
-        buf.put(buffer);
-        total_length
+        buf.put(&buffer[..]);
+        buffer.len()
     }
 
     fn from_compact(mut buf: &[u8], _: usize) -> (Self, &[u8]) {
         let (topics, new_buf) = Vec::specialized_from_compact(buf, buf.len());
         buf = new_buf;
         let (data, buf) = Bytes::from_compact(buf, buf.len());
-        let log_data = LogData::new_unchecked(topics, data);
+        let log_data = Self::new_unchecked(topics, data);
         (log_data, buf)
     }
 }
@@ -31,12 +32,11 @@ impl Compact for Log {
     where
         B: BufMut + AsMut<[u8]>,
     {
-        let mut buffer = bytes::BytesMut::new();
+        let mut buffer = Vec::new();
         self.address.to_compact(&mut buffer);
         self.data.to_compact(&mut buffer);
-        let total_length = buffer.len();
-        buf.put(buffer);
-        total_length
+        buf.put(&buffer[..]);
+        buffer.len()
     }
 
     fn from_compact(mut buf: &[u8], _: usize) -> (Self, &[u8]) {
@@ -44,7 +44,7 @@ impl Compact for Log {
         buf = new_buf;
         let (log_data, new_buf) = LogData::from_compact(buf, buf.len());
         buf = new_buf;
-        let log = Log { address, data: log_data };
+        let log = Self { address, data: log_data };
         (log, buf)
     }
 }
@@ -77,7 +77,8 @@ mod tests {
     #[test]
     fn test_compact_log_codec() {
         let test_vectors: Vec<CompactLogTestVector> =
-            serde_json::from_str(include_str!("../../testdata/log_compact.json")).unwrap();
+            serde_json::from_str(include_str!("../../testdata/log_compact.json"))
+                .expect("Failed to parse test vectors");
 
         for test_vector in test_vectors {
             let log_data = LogData::new_unchecked(test_vector.topics, test_vector.data);

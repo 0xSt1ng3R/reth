@@ -3,23 +3,22 @@
 use crate::{
     error::NetworkError,
     import::{BlockImport, ProofOfStakeBlockImport},
-    peers::PeersConfig,
-    session::SessionsConfig,
     transactions::TransactionsManagerConfig,
     NetworkHandle, NetworkManager,
 };
-use reth_discv4::{Discv4Config, Discv4ConfigBuilder, DEFAULT_DISCOVERY_ADDRESS};
-use reth_discv5::config::OPSTACK;
+use reth_chainspec::{ChainSpec, MAINNET};
+use reth_discv4::{Discv4Config, Discv4ConfigBuilder, NatResolver, DEFAULT_DISCOVERY_ADDRESS};
+use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
 use reth_eth_wire::{HelloMessage, HelloMessageWithProtocols, Status};
-use reth_primitives::{
-    mainnet_nodes, pk2id, sepolia_nodes, Chain, ChainSpec, ForkFilter, Head, NamedChain,
-    NodeRecord, PeerId, MAINNET,
-};
+use reth_network_peers::{mainnet_nodes, pk2id, sepolia_nodes, PeerId, TrustedPeer};
+use reth_network_types::{PeersConfig, SessionsConfig};
+use reth_primitives::{ForkFilter, Head};
 use reth_provider::{BlockReader, HeaderProvider};
 use reth_tasks::{TaskSpawner, TokioTaskExecutor};
 use secp256k1::SECP256K1;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+
 // re-export for convenience
 use crate::protocol::{IntoRlpxSubProtocol, RlpxSubProtocols};
 pub use secp256k1::SecretKey;
@@ -40,7 +39,7 @@ pub struct NetworkConfig<C> {
     /// The node's secret key, from which the node's identity is derived.
     pub secret_key: SecretKey,
     /// All boot nodes to start network discovery with.
-    pub boot_nodes: HashSet<NodeRecord>,
+    pub boot_nodes: HashSet<TrustedPeer>,
     /// How to set up discovery over DNS.
     pub dns_discovery_config: Option<DnsDiscoveryConfig>,
     /// Address to use for discovery v4.
@@ -53,7 +52,7 @@ pub struct NetworkConfig<C> {
     pub listener_addr: SocketAddr,
     /// How to instantiate peer manager.
     pub peers_config: PeersConfig,
-    /// How to configure the [SessionManager](crate::session::SessionManager).
+    /// How to configure the [`SessionManager`](crate::session::SessionManager).
     pub sessions_config: SessionsConfig,
     /// The chain spec
     pub chain_spec: Arc<ChainSpec>,
@@ -72,9 +71,9 @@ pub struct NetworkConfig<C> {
     pub executor: Box<dyn TaskSpawner>,
     /// The `Status` message to send to peers at the beginning.
     pub status: Status,
-    /// Sets the hello message for the p2p handshake in RLPx
+    /// Sets the hello message for the p2p handshake in `RLPx`
     pub hello_message: HelloMessageWithProtocols,
-    /// Additional protocols to announce and handle in RLPx
+    /// Additional protocols to announce and handle in `RLPx`
     pub extra_protocols: RlpxSubProtocols,
     /// Whether to disable transaction gossip
     pub tx_gossip_disabled: bool,
@@ -88,6 +87,11 @@ impl NetworkConfig<()> {
     /// Convenience method for creating the corresponding builder type
     pub fn builder(secret_key: SecretKey) -> NetworkConfigBuilder {
         NetworkConfigBuilder::new(secret_key)
+    }
+
+    /// Convenience method for creating the corresponding builder type with a random secret key.
+    pub fn builder_with_rng_secret_key() -> NetworkConfigBuilder {
+        NetworkConfigBuilder::with_rng_secret_key()
     }
 }
 
@@ -103,56 +107,15 @@ impl<C> NetworkConfig<C> {
         self
     }
 
-    /// Sets the config to use for the discovery v5 protocol, with help of the
-    /// [`reth_discv5::ConfigBuilder`].
-    /// ```
-    /// use reth_network::NetworkConfigBuilder;
-    /// use secp256k1::{rand::thread_rng, SecretKey};
-    ///
-    /// let sk = SecretKey::new(&mut thread_rng());
-    /// let network_config = NetworkConfigBuilder::new(sk).build(());
-    /// let fork_id = network_config.status.forkid;
-    /// let network_config = network_config
-    ///     .discovery_v5_with_config_builder(|builder| builder.fork(b"eth", fork_id).build());
-    /// ```
-
-    pub fn discovery_v5_with_config_builder(
-        self,
-        f: impl FnOnce(reth_discv5::ConfigBuilder) -> reth_discv5::Config,
-    ) -> Self {
-        let rlpx_port = self.listener_addr.port();
-        let chain = self.chain_spec.chain;
-        let fork_id = self.status.forkid;
-        let boot_nodes = self.boot_nodes.clone();
-
-        let mut builder =
-            reth_discv5::Config::builder(rlpx_port).add_unsigned_boot_nodes(boot_nodes.into_iter()); // todo: store discv5 peers in separate file
-
-        if chain.is_optimism() {
-            builder = builder.fork(OPSTACK, fork_id)
-        }
-
-        if chain == Chain::optimism_mainnet() || chain == Chain::base_mainnet() {
-            builder = builder.add_optimism_mainnet_boot_nodes()
-        } else if chain == Chain::from_named(NamedChain::OptimismSepolia) ||
-            chain == Chain::from_named(NamedChain::BaseSepolia)
-        {
-            builder = builder.add_optimism_sepolia_boot_nodes()
-        }
-
-        self.set_discovery_v5(f(builder))
-    }
-
-    /// Sets the config to use for the discovery v5 protocol.
-    pub fn set_discovery_v5(mut self, discv5_config: reth_discv5::Config) -> Self {
-        self.discovery_v5_config = Some(discv5_config);
-        self
-    }
-
-    /// Sets the address for the incoming connection listener.
-    pub fn set_listener_addr(mut self, listener_addr: SocketAddr) -> Self {
+    /// Sets the address for the incoming `RLPx` connection listener.
+    pub const fn set_listener_addr(mut self, listener_addr: SocketAddr) -> Self {
         self.listener_addr = listener_addr;
         self
+    }
+
+    /// Returns the address for the incoming `RLPx` connection listener.
+    pub const fn listener_addr(&self) -> &SocketAddr {
+        &self.listener_addr
     }
 }
 
@@ -160,7 +123,7 @@ impl<C> NetworkConfig<C>
 where
     C: BlockReader + HeaderProvider + Clone + Unpin + 'static,
 {
-    /// Starts the networking stack given a [NetworkConfig] and returns a handle to the network.
+    /// Starts the networking stack given a [`NetworkConfig`] and returns a handle to the network.
     pub async fn start_network(self) -> Result<NetworkHandle, NetworkError> {
         let client = self.client.clone();
         let (handle, network, _txpool, eth) =
@@ -175,7 +138,6 @@ where
 
 /// Builder for [`NetworkConfig`](struct.NetworkConfig.html).
 #[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NetworkConfigBuilder {
     /// The node's secret key, from which the node's identity is derived.
     secret_key: SecretKey,
@@ -183,10 +145,10 @@ pub struct NetworkConfigBuilder {
     dns_discovery_config: Option<DnsDiscoveryConfig>,
     /// How to set up discovery version 4.
     discovery_v4_builder: Option<Discv4ConfigBuilder>,
-    /// Whether to enable discovery version 5. Disabled by default.
-    enable_discovery_v5: bool,
+    /// How to set up discovery version 5.
+    discovery_v5_builder: Option<reth_discv5::ConfigBuilder>,
     /// All boot nodes to start network discovery with.
-    boot_nodes: HashSet<NodeRecord>,
+    boot_nodes: HashSet<TrustedPeer>,
     /// Address to use for discovery
     discovery_addr: Option<SocketAddr>,
     /// Listener for incoming connections
@@ -200,19 +162,16 @@ pub struct NetworkConfigBuilder {
     /// The default mode of the network.
     network_mode: NetworkMode,
     /// The executor to use for spawning tasks.
-    #[serde(skip)]
     executor: Option<Box<dyn TaskSpawner>>,
-    /// Sets the hello message for the p2p handshake in RLPx
+    /// Sets the hello message for the p2p handshake in `RLPx`
     hello_message: Option<HelloMessageWithProtocols>,
     /// The executor to use for spawning tasks.
-    #[serde(skip)]
     extra_protocols: RlpxSubProtocols,
     /// Head used to start set for the fork filter and status.
     head: Option<Head>,
     /// Whether tx gossip is disabled
     tx_gossip_disabled: bool,
     /// The block importer type
-    #[serde(skip)]
     block_import: Option<Box<dyn BlockImport>>,
     /// How to instantiate transactions manager.
     transactions_manager_config: TransactionsManagerConfig,
@@ -222,12 +181,18 @@ pub struct NetworkConfigBuilder {
 
 #[allow(missing_docs)]
 impl NetworkConfigBuilder {
+    /// Create a new builder instance with a random secret key.
+    pub fn with_rng_secret_key() -> Self {
+        Self::new(rng_secret_key())
+    }
+
+    /// Create a new builder instance with the given secret key.
     pub fn new(secret_key: SecretKey) -> Self {
         Self {
             secret_key,
             dns_discovery_config: Some(Default::default()),
             discovery_v4_builder: Some(Default::default()),
-            enable_discovery_v5: false,
+            discovery_v5_builder: None,
             boot_nodes: Default::default(),
             discovery_addr: None,
             listener_addr: None,
@@ -245,9 +210,22 @@ impl NetworkConfigBuilder {
         }
     }
 
+    /// Apply a function to the builder.
+    pub fn apply<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Self) -> Self,
+    {
+        f(self)
+    }
+
     /// Returns the configured [`PeerId`]
     pub fn get_peer_id(&self) -> PeerId {
         pk2id(&self.secret_key.public_key(SECP256K1))
+    }
+
+    /// Returns the configured [`SecretKey`], from which the node's identity is derived.
+    pub const fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
     }
 
     /// Sets the chain spec.
@@ -257,7 +235,7 @@ impl NetworkConfigBuilder {
     }
 
     /// Sets the [`NetworkMode`].
-    pub fn network_mode(mut self, network_mode: NetworkMode) -> Self {
+    pub const fn network_mode(mut self, network_mode: NetworkMode) -> Self {
         self.network_mode = network_mode;
         self
     }
@@ -267,7 +245,7 @@ impl NetworkConfigBuilder {
     /// This is used to construct the appropriate [`ForkFilter`] and [`Status`] message.
     ///
     /// If not set, this defaults to the genesis specified by the current chain specification.
-    pub fn set_head(mut self, head: Head) -> Self {
+    pub const fn set_head(mut self, head: Head) -> Self {
         self.head = Some(head);
         self
     }
@@ -295,74 +273,87 @@ impl NetworkConfigBuilder {
 
     /// Sets the executor to use for spawning tasks.
     ///
-    /// If `None`, then [tokio::spawn] is used for spawning tasks.
+    /// If `None`, then [`tokio::spawn`] is used for spawning tasks.
     pub fn with_task_executor(mut self, executor: Box<dyn TaskSpawner>) -> Self {
         self.executor = Some(executor);
         self
     }
 
     /// Sets a custom config for how sessions are handled.
-    pub fn sessions_config(mut self, config: SessionsConfig) -> Self {
+    pub const fn sessions_config(mut self, config: SessionsConfig) -> Self {
         self.sessions_config = Some(config);
         self
     }
 
-    pub fn transactions_manager_config(mut self, config: TransactionsManagerConfig) -> Self {
+    /// Configures the transactions manager with the given config.
+    pub const fn transactions_manager_config(mut self, config: TransactionsManagerConfig) -> Self {
         self.transactions_manager_config = config;
         self
     }
 
     /// Sets the discovery and listener address
     ///
-    /// This is a convenience function for both [NetworkConfigBuilder::listener_addr] and
-    /// [NetworkConfigBuilder::discovery_addr].
+    /// This is a convenience function for both [`NetworkConfigBuilder::listener_addr`] and
+    /// [`NetworkConfigBuilder::discovery_addr`].
     ///
     /// By default, both are on the same port:
-    /// [DEFAULT_DISCOVERY_PORT](reth_discv4::DEFAULT_DISCOVERY_PORT)
-    pub fn set_addrs(self, addr: SocketAddr) -> Self {
+    /// [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    pub const fn set_addrs(self, addr: SocketAddr) -> Self {
         self.listener_addr(addr).discovery_addr(addr)
     }
 
     /// Sets the socket address the network will listen on.
     ///
-    /// By default, this is [DEFAULT_DISCOVERY_ADDRESS]
-    pub fn listener_addr(mut self, listener_addr: SocketAddr) -> Self {
+    /// By default, this is [`DEFAULT_DISCOVERY_ADDRESS`]
+    pub const fn listener_addr(mut self, listener_addr: SocketAddr) -> Self {
         self.listener_addr = Some(listener_addr);
         self
     }
 
     /// Sets the port of the address the network will listen on.
     ///
-    /// By default, this is [DEFAULT_DISCOVERY_PORT](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
     pub fn listener_port(mut self, port: u16) -> Self {
         self.listener_addr.get_or_insert(DEFAULT_DISCOVERY_ADDRESS).set_port(port);
         self
     }
 
     /// Sets the socket address the discovery network will listen on
-    pub fn discovery_addr(mut self, discovery_addr: SocketAddr) -> Self {
+    pub const fn discovery_addr(mut self, discovery_addr: SocketAddr) -> Self {
         self.discovery_addr = Some(discovery_addr);
         self
     }
 
     /// Sets the port of the address the discovery network will listen on.
     ///
-    /// By default, this is [DEFAULT_DISCOVERY_PORT](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
     pub fn discovery_port(mut self, port: u16) -> Self {
         self.discovery_addr.get_or_insert(DEFAULT_DISCOVERY_ADDRESS).set_port(port);
         self
     }
 
+    /// Sets the external ip resolver to use for discovery v4.
+    ///
+    /// If no [`Discv4ConfigBuilder`] is set via [`Self::discovery`], this will create a new one.
+    ///
+    /// This is a convenience function for setting the external ip resolver on the default
+    /// [`Discv4Config`] config.
+    pub fn external_ip_resolver(mut self, resolver: NatResolver) -> Self {
+        self.discovery_v4_builder
+            .get_or_insert_with(Discv4Config::builder)
+            .external_ip_resolver(Some(resolver));
+        self
+    }
+
     /// Sets the discv4 config to use.
-    //
     pub fn discovery(mut self, builder: Discv4ConfigBuilder) -> Self {
         self.discovery_v4_builder = Some(builder);
         self
     }
 
-    /// Allows discv5 discovery.
-    pub fn discovery_v5(mut self) -> Self {
-        self.enable_discovery_v5 = true;
+    /// Sets the discv5 config to use.
+    pub fn discovery_v5(mut self, builder: reth_discv5::ConfigBuilder) -> Self {
+        self.discovery_v5_builder = Some(builder);
         self
     }
 
@@ -372,19 +363,19 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Convenience function for setting [Self::boot_nodes] to the mainnet boot nodes.
+    /// Convenience function for setting [`Self::boot_nodes`] to the mainnet boot nodes.
     pub fn mainnet_boot_nodes(self) -> Self {
         self.boot_nodes(mainnet_nodes())
     }
 
-    /// Convenience function for setting [Self::boot_nodes] to the sepolia boot nodes.
+    /// Convenience function for setting [`Self::boot_nodes`] to the sepolia boot nodes.
     pub fn sepolia_boot_nodes(self) -> Self {
         self.boot_nodes(sepolia_nodes())
     }
 
     /// Sets the boot nodes.
-    pub fn boot_nodes(mut self, nodes: impl IntoIterator<Item = NodeRecord>) -> Self {
-        self.boot_nodes = nodes.into_iter().collect();
+    pub fn boot_nodes<T: Into<TrustedPeer>>(mut self, nodes: impl IntoIterator<Item = T>) -> Self {
+        self.boot_nodes = nodes.into_iter().map(Into::into).collect();
         self
     }
 
@@ -414,12 +405,6 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Enable the Discv5 discovery.
-    pub fn enable_discv5_discovery(mut self) -> Self {
-        self.enable_discovery_v5 = true;
-        self
-    }
-
     /// Disable the DNS discovery if the given condition is true.
     pub fn disable_dns_discovery_if(self, disable: bool) -> Self {
         if disable {
@@ -438,14 +423,14 @@ impl NetworkConfigBuilder {
         }
     }
 
-    /// Adds a new additional protocol to the RLPx sub-protocol list.
+    /// Adds a new additional protocol to the `RLPx` sub-protocol list.
     pub fn add_rlpx_sub_protocol(mut self, protocol: impl IntoRlpxSubProtocol) -> Self {
         self.extra_protocols.push(protocol);
         self
     }
 
     /// Sets whether tx gossip is disabled.
-    pub fn disable_tx_gossip(mut self, disable_tx_gossip: bool) -> Self {
+    pub const fn disable_tx_gossip(mut self, disable_tx_gossip: bool) -> Self {
         self.tx_gossip_disabled = disable_tx_gossip;
         self
     }
@@ -456,7 +441,8 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Convenience function for creating a [NetworkConfig] with a noop provider that does nothing.
+    /// Convenience function for creating a [`NetworkConfig`] with a noop provider that does
+    /// nothing.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn build_with_noop_provider(
         self,
@@ -476,7 +462,7 @@ impl NetworkConfigBuilder {
             secret_key,
             mut dns_discovery_config,
             discovery_v4_builder,
-            enable_discovery_v5: _,
+            mut discovery_v5_builder,
             boot_nodes,
             discovery_addr,
             listener_addr,
@@ -492,6 +478,15 @@ impl NetworkConfigBuilder {
             block_import,
             transactions_manager_config,
         } = self;
+
+        discovery_v5_builder = discovery_v5_builder.map(|mut builder| {
+            if let Some(network_stack_id) = NetworkStackId::id(&chain_spec) {
+                let fork_id = chain_spec.latest_fork_id();
+                builder = builder.fork(network_stack_id, fork_id)
+            }
+
+            builder
+        });
 
         let listener_addr = listener_addr.unwrap_or(DEFAULT_DISCOVERY_ADDRESS);
 
@@ -530,7 +525,7 @@ impl NetworkConfigBuilder {
             boot_nodes,
             dns_discovery_config,
             discovery_v4_config: discovery_v4_builder.map(|builder| builder.build()),
-            discovery_v5_config: None,
+            discovery_v5_config: discovery_v5_builder.map(|builder| builder.build()),
             discovery_v4_addr: discovery_addr.unwrap_or(DEFAULT_DISCOVERY_ADDRESS),
             listener_addr,
             peers_config: peers_config.unwrap_or_default(),
@@ -568,8 +563,8 @@ pub enum NetworkMode {
 
 impl NetworkMode {
     /// Returns true if network has entered proof-of-stake
-    pub fn is_stake(&self) -> bool {
-        matches!(self, NetworkMode::Stake)
+    pub const fn is_stake(&self) -> bool {
+        matches!(self, Self::Stake)
     }
 }
 
@@ -577,10 +572,10 @@ impl NetworkMode {
 mod tests {
     use super::*;
     use rand::thread_rng;
+    use reth_chainspec::Chain;
     use reth_dns_discovery::tree::LinkEntry;
     use reth_primitives::ForkHash;
     use reth_provider::test_utils::NoopProvider;
-    use std::collections::BTreeMap;
 
     fn builder() -> NetworkConfigBuilder {
         let secret_key = SecretKey::new(&mut thread_rng());
@@ -604,7 +599,7 @@ mod tests {
         let mut chain_spec = Arc::clone(&MAINNET);
 
         // remove any `next` fields we would have by removing all hardforks
-        Arc::make_mut(&mut chain_spec).hardforks = BTreeMap::new();
+        Arc::make_mut(&mut chain_spec).hardforks = Default::default();
 
         // check that the forkid is initialized with the genesis and no other forks
         let genesis_fork_hash = ForkHash::from(chain_spec.genesis_hash());

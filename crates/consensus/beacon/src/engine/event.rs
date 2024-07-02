@@ -1,9 +1,9 @@
 use crate::engine::forkchoice::ForkchoiceStatus;
-use reth_interfaces::consensus::ForkchoiceState;
 use reth_primitives::{SealedBlock, SealedHeader, B256};
+use reth_rpc_types::engine::ForkchoiceState;
 use std::{sync::Arc, time::Duration};
 
-/// Events emitted by [crate::BeaconConsensusEngine].
+/// Events emitted by [`crate::BeaconConsensusEngine`].
 #[derive(Clone, Debug)]
 pub enum BeaconConsensusEngineEvent {
     /// The fork choice state was updated, and the current fork choice status

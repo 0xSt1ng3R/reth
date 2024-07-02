@@ -28,9 +28,9 @@ pub fn derive_zstd(input: TokenStream) -> TokenStream {
     compact::derive(input, is_zstd)
 }
 
-/// This code implements the main codec. If the codec supports it, it will also provide the [derive_arbitrary()] function, which automatically implements arbitrary traits and roundtrip fuzz tests.
+/// This code implements the main codec. If the codec supports it, it will also provide the [`derive_arbitrary()`] function, which automatically implements arbitrary traits and roundtrip fuzz tests.
 ///
-/// If you prefer to manually implement the arbitrary traits, you can still use the [add_arbitrary_tests()] function to add arbitrary fuzz tests.
+/// If you prefer to manually implement the arbitrary traits, you can still use the [`add_arbitrary_tests()`] function to add arbitrary fuzz tests.
 ///
 /// Example usage:
 /// * `#[main_codec(rlp)]`: will implement `derive_arbitrary(rlp)` or `derive_arbitrary(compact, rlp)`, if `compact` is the `main_codec`.
@@ -39,64 +39,6 @@ pub fn derive_zstd(input: TokenStream) -> TokenStream {
 #[rustfmt::skip]
 #[allow(unreachable_code)]
 pub fn main_codec(args: TokenStream, input: TokenStream) -> TokenStream {
-    #[cfg(feature = "compact")]
-    return use_compact(args, input);
-
-    #[cfg(feature = "scale")]
-    return use_scale(args, input);
-
-    #[cfg(feature = "postcard")]
-    return use_postcard(args, input);
-
-    #[cfg(feature = "no_codec")]
-    return no_codec(args, input);
-
-    // no features
-    no_codec(args, input)
-}
-
-#[proc_macro_attribute]
-pub fn use_scale(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut ast = parse_macro_input!(input as DeriveInput);
-    let compactable_types = ["u8", "u16", "u32", "i32", "i64", "u64", "f32", "f64"];
-
-    if let syn::Data::Struct(ref mut data) = &mut ast.data {
-        if let syn::Fields::Named(fields) = &mut data.fields {
-            for field in fields.named.iter_mut() {
-                if let syn::Type::Path(ref path) = field.ty {
-                    if !path.path.segments.is_empty() {
-                        let _type = format!("{}", path.path.segments[0].ident);
-                        if compactable_types.contains(&_type.as_str()) {
-                            field.attrs.push(syn::parse_quote! {
-                                #[codec(compact)]
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    quote! {
-        #[derive(parity_scale_codec::Encode, parity_scale_codec::Decode, serde::Serialize, serde::Deserialize)]
-        #ast
-    }
-    .into()
-}
-
-#[proc_macro_attribute]
-pub fn use_postcard(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
-
-    quote! {
-        #[derive(serde::Serialize, serde::Deserialize)]
-        #ast
-    }
-    .into()
-}
-
-#[proc_macro_attribute]
-pub fn use_compact(args: TokenStream, input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
 
     let with_zstd = args.clone().into_iter().any(|tk| tk.to_string() == "zstd");
@@ -127,7 +69,7 @@ pub fn use_compact(args: TokenStream, input: TokenStream) -> TokenStream {
     derive_arbitrary(TokenStream::from_iter(args), compact)
 }
 
-/// Adds `Arbitrary` and `proptest::Arbitrary` imports into scope and derives the struct/enum.
+/// Adds `Arbitrary` imports into scope and derives the struct/enum.
 ///
 /// If `compact` or `rlp` is passed to `derive_arbitrary`, there will be proptest roundtrip tests
 /// generated. An integer value passed will limit the number of proptest cases generated (default:
@@ -147,17 +89,13 @@ pub fn derive_arbitrary(args: TokenStream, input: TokenStream) -> TokenStream {
     let tests = arbitrary::maybe_generate_tests(args, &ast);
 
     // Avoid duplicate names
-    let prop_import = format_ident!("{}PropTestArbitrary", ast.ident);
     let arb_import = format_ident!("{}Arbitrary", ast.ident);
 
     quote! {
         #[cfg(any(test, feature = "arbitrary"))]
-        use proptest_derive::Arbitrary as #prop_import;
-
-        #[cfg(any(test, feature = "arbitrary"))]
         use arbitrary::Arbitrary as #arb_import;
 
-        #[cfg_attr(any(test, feature = "arbitrary"), derive(#prop_import, #arb_import))]
+        #[cfg_attr(any(test, feature = "arbitrary"), derive(#arb_import))]
         #ast
 
         #tests
@@ -175,10 +113,4 @@ pub fn add_arbitrary_tests(args: TokenStream, input: TokenStream) -> TokenStream
         #tests
     }
     .into()
-}
-
-#[proc_macro_attribute]
-pub fn no_codec(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
-    quote! { #ast }.into()
 }

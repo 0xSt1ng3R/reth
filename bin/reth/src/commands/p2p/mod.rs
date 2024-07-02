@@ -3,20 +3,21 @@
 use crate::{
     args::{
         get_secret_key,
-        utils::{chain_help, chain_spec_value_parser, hash_or_num_value_parser, SUPPORTED_CHAINS},
-        DatabaseArgs, DiscoveryArgs,
+        utils::{chain_help, chain_value_parser, hash_or_num_value_parser, SUPPORTED_CHAINS},
+        DatabaseArgs, NetworkArgs,
     },
-    dirs::{DataDirPath, MaybePlatformPath},
     utils::get_single_header,
 };
 use backon::{ConstantBuilder, Retryable};
 use clap::{Parser, Subcommand};
+use reth_chainspec::ChainSpec;
 use reth_config::Config;
 use reth_db::create_db;
-use reth_discv4::NatResolver;
-use reth_interfaces::p2p::bodies::client::BodiesClient;
-use reth_primitives::{BlockHashOrNumber, ChainSpec, NodeRecord};
-use reth_provider::ProviderFactory;
+use reth_network::NetworkConfigBuilder;
+use reth_network_p2p::bodies::client::BodiesClient;
+use reth_node_core::args::DatadirArgs;
+use reth_primitives::BlockHashOrNumber;
+use reth_provider::{providers::StaticFileProvider, ProviderFactory};
 use std::{path::PathBuf, sync::Arc};
 
 /// `reth p2p` command
@@ -34,44 +35,19 @@ pub struct Command {
         value_name = "CHAIN_OR_PATH",
         long_help = chain_help(),
         default_value = SUPPORTED_CHAINS[0],
-        value_parser = chain_spec_value_parser
+        value_parser = chain_value_parser
     )]
     chain: Arc<ChainSpec>,
-
-    /// The path to the data dir for all reth files and subdirectories.
-    ///
-    /// Defaults to the OS-specific data directory:
-    ///
-    /// - Linux: `$XDG_DATA_HOME/reth/` or `$HOME/.local/share/reth/`
-    /// - Windows: `{FOLDERID_RoamingAppData}/reth/`
-    /// - macOS: `$HOME/Library/Application Support/reth/`
-    #[arg(long, value_name = "DATA_DIR", verbatim_doc_comment, default_value_t)]
-    datadir: MaybePlatformPath<DataDirPath>,
-
-    /// Secret key to use for this node.
-    ///
-    /// This also will deterministically set the peer ID.
-    #[arg(long, value_name = "PATH")]
-    p2p_secret_key: Option<PathBuf>,
-
-    /// Disable the discovery service.
-    #[command(flatten)]
-    pub discovery: DiscoveryArgs,
-
-    /// Target trusted peer
-    #[arg(long)]
-    trusted_peer: Option<NodeRecord>,
-
-    /// Connect only to trusted peers
-    #[arg(long)]
-    trusted_only: bool,
 
     /// The number of retries per request
     #[arg(long, default_value = "5")]
     retries: usize,
 
-    #[arg(long, default_value = "any")]
-    nat: NatResolver,
+    #[command(flatten)]
+    network: NetworkArgs,
+
+    #[command(flatten)]
+    datadir: DatadirArgs,
 
     #[command(flatten)]
     db: DatabaseArgs,
@@ -103,36 +79,42 @@ impl Command {
         let noop_db = Arc::new(create_db(tempdir.into_path(), self.db.database_args())?);
 
         // add network name to data dir
-        let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
-        let config_path = self.config.clone().unwrap_or_else(|| data_dir.config_path());
+        let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain);
+        let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
 
         let mut config: Config = confy::load_path(&config_path).unwrap_or_default();
 
-        if let Some(peer) = self.trusted_peer {
-            config.peers.trusted_nodes.insert(peer);
+        for peer in &self.network.trusted_peers {
+            config.peers.trusted_nodes.insert(peer.resolve().await?);
         }
 
-        if config.peers.trusted_nodes.is_empty() && self.trusted_only {
+        if config.peers.trusted_nodes.is_empty() && self.network.trusted_only {
             eyre::bail!("No trusted nodes. Set trusted peer with `--trusted-peer <enode record>` or set `--trusted-only` to `false`")
         }
 
-        config.peers.trusted_nodes_only = self.trusted_only;
+        config.peers.trusted_nodes_only = self.network.trusted_only;
 
-        let default_secret_key_path = data_dir.p2p_secret_path();
-        let secret_key_path = self.p2p_secret_key.clone().unwrap_or(default_secret_key_path);
+        let default_secret_key_path = data_dir.p2p_secret();
+        let secret_key_path =
+            self.network.p2p_secret_key.clone().unwrap_or(default_secret_key_path);
         let p2p_secret_key = get_secret_key(&secret_key_path)?;
+        let rlpx_socket = (self.network.addr, self.network.port).into();
+        let boot_nodes = self.chain.bootnodes().unwrap_or_default();
 
-        let mut network_config_builder =
-            config.network_config(self.nat, None, p2p_secret_key).chain_spec(self.chain.clone());
-
-        network_config_builder = self.discovery.apply_to_builder(network_config_builder);
-
-        let network = network_config_builder
+        let network = NetworkConfigBuilder::new(p2p_secret_key)
+            .peer_config(config.peers_config_with_basic_nodes_from_file(None))
+            .external_ip_resolver(self.network.nat)
+            .chain_spec(self.chain.clone())
+            .disable_discv4_discovery_if(self.chain.chain.is_optimism())
+            .boot_nodes(boot_nodes.clone())
+            .apply(|builder| {
+                self.network.discovery.apply_to_builder(builder, rlpx_socket, boot_nodes)
+            })
             .build(Arc::new(ProviderFactory::new(
                 noop_db,
                 self.chain.clone(),
-                data_dir.static_files_path(),
-            )?))
+                StaticFileProvider::read_write(data_dir.static_files())?,
+            )))
             .start_network()
             .await?;
 
