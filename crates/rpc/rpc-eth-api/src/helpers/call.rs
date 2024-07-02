@@ -171,6 +171,88 @@ pub trait EthCall: Call + LoadPendingBlock {
         }
     }
 
+    /// Creates the AccessList for the `calls` bundle vector at the [BlockId] or latest.
+    pub(crate) async fn create_bundle_access_list_at(
+        &self,
+        calls: Vec<TransactionRequest>,
+        block_number: Option<BlockId>,
+    ) -> EthResult<Vec<AccessListWithGasUsed>> {
+        self.on_blocking_task(|this| async move {
+            this.create_bundle_access_list_with(calls, block_number).await
+        })
+        .await
+    }
+
+    pub async fn create_bundle_access_list_with(
+        &self,
+        calls: Vec<TransactionRequest>,
+        block_id: Option<BlockId>,
+    ) -> EthResult<Vec<AccessListWithGasUsed>> {
+        let at = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
+        let (cfg, block_env, at) = self.evm_env_at(at).await?;
+
+        let this = self.clone();
+
+        self.spawn_with_state_at_block(at, move |state| {
+            let mut access_lists = Vec::with_capacity(calls.len());
+            let mut db = CacheDB::new(StateProviderDatabase::new(state));
+            let mut calls = calls.into_iter().peekable();
+
+            while let Some(mut call) = calls.next() {
+                let mut env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                env.cfg.disable_block_gas_limit = true;
+                env.cfg.disable_base_fee = true;
+
+                if call.gas.is_none() && env.tx.gas_price > U256::ZERO {
+                    cap_tx_gas_limit_with_caller_allowance(&mut db, &mut env.tx)?;
+                }
+
+                let from = call.from.unwrap_or_default();
+                let to = if let Some(to) = call.to {
+                    to
+                } else {
+                    let nonce = db.basic_ref(from)?.unwrap_or_default().nonce;
+                    from.create(nonce)
+                };
+
+                let initial = call.access_list.take().unwrap_or_default();
+
+                let precompiles = get_precompiles(env.handler_cfg.spec_id);
+                let mut inspector = AccessListInspector::new(initial, from, to, precompiles);
+                let (res, _) = this.inspect(&mut db, env, &mut inspector)?;
+
+                match res.result {
+                    ExecutionResult::Halt { reason, .. } => Err(match reason {
+                        HaltReason::NonceOverflow => RpcInvalidTransactionError::NonceMaxValue,
+                        halt => RpcInvalidTransactionError::EvmHalt(halt),
+                    }),
+                    ExecutionResult::Revert { output, .. } => {
+                        Err(RpcInvalidTransactionError::Revert(RevertError::new(output)))
+                    }
+                    ExecutionResult::Success { .. } => Ok(()),
+                }?;
+
+                let access_list = inspector.into_access_list();
+                call.access_list = Some(access_list.clone());
+
+                let mut _env = build_call_evm_env(cfg.clone(), block_env.clone(), call.clone())?;
+                _env.cfg.disable_block_gas_limit = true;
+                _env.cfg.disable_base_fee = true;
+                let (res0, _) = this.transact(&mut db, _env)?;
+                let gas_used = U256::from(res0.result.gas_used());
+
+                access_lists.push(AccessListWithGasUsed { access_list, gas_used });
+
+                if calls.peek().is_some() {
+                    db.commit(res.state)
+                }
+            }
+
+            Ok(access_lists)
+        })
+        .await
+    }
+
     /// Creates [`AccessListWithGasUsed`] for the [`TransactionRequest`] at the given
     /// [`BlockId`], or latest block.
     fn create_access_list_at(
