@@ -2,8 +2,8 @@
 //! transaction deserialized from the json input of an RPC call. Depending on what fields are set,
 //! it can be converted into the container type [`TypedTransactionRequest`].
 
-use alloy_primitives::{Address, Bytes, B256, U128, U256, U64};
-use alloy_rlp::{BufMut, Decodable, Encodable, Error as RlpError};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Error as RlpError, EMPTY_STRING_CODE};
 use alloy_rpc_types::{AccessList, BlobTransactionSidecar};
 use serde::{Deserialize, Serialize};
 
@@ -30,9 +30,9 @@ pub enum TypedTransactionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyTransactionRequest {
     /// The nonce of the transaction
-    pub nonce: U64,
+    pub nonce: u64,
     /// The gas price for the transaction
-    pub gas_price: U128,
+    pub gas_price: U256,
     /// The gas limit for the transaction
     pub gas_limit: U256,
     /// The kind of transaction (e.g., Call, Create)
@@ -51,9 +51,9 @@ pub struct EIP2930TransactionRequest {
     /// The chain ID for the transaction
     pub chain_id: u64,
     /// The nonce of the transaction
-    pub nonce: U64,
+    pub nonce: u64,
     /// The gas price for the transaction
-    pub gas_price: U128,
+    pub gas_price: U256,
     /// The gas limit for the transaction
     pub gas_limit: U256,
     /// The kind of transaction (e.g., Call, Create)
@@ -72,11 +72,11 @@ pub struct EIP1559TransactionRequest {
     /// The chain ID for the transaction
     pub chain_id: u64,
     /// The nonce of the transaction
-    pub nonce: U64,
+    pub nonce: u64,
     /// The maximum priority fee per gas for the transaction
-    pub max_priority_fee_per_gas: U128,
+    pub max_priority_fee_per_gas: U256,
     /// The maximum fee per gas for the transaction
-    pub max_fee_per_gas: U128,
+    pub max_fee_per_gas: U256,
     /// The gas limit for the transaction
     pub gas_limit: U256,
     /// The kind of transaction (e.g., Call, Create)
@@ -95,11 +95,11 @@ pub struct EIP4844TransactionRequest {
     /// The chain ID for the transaction
     pub chain_id: u64,
     /// The nonce of the transaction
-    pub nonce: U64,
+    pub nonce: u64,
     /// The maximum priority fee per gas for the transaction
-    pub max_priority_fee_per_gas: U128,
+    pub max_priority_fee_per_gas: U256,
     /// The maximum fee per gas for the transaction
-    pub max_fee_per_gas: U128,
+    pub max_fee_per_gas: U256,
     /// The gas limit for the transaction
     pub gas_limit: U256,
     /// The kind of transaction (e.g., Call, Create)
@@ -111,7 +111,7 @@ pub struct EIP4844TransactionRequest {
     /// The access list for the transaction
     pub access_list: AccessList,
     /// The maximum fee per blob gas for the transaction
-    pub max_fee_per_blob_gas: U128,
+    pub max_fee_per_blob_gas: U256,
     /// Versioned hashes associated with the transaction
     pub blob_versioned_hashes: Vec<B256>,
     /// Sidecar information for the transaction
@@ -151,13 +151,13 @@ impl Encodable for TransactionKind {
     fn encode(&self, out: &mut dyn BufMut) {
         match self {
             TransactionKind::Call(to) => to.encode(out),
-            TransactionKind::Create => ([]).encode(out),
+            TransactionKind::Create => [].encode(out),
         }
     }
     fn length(&self) -> usize {
         match self {
             TransactionKind::Call(to) => to.length(),
-            TransactionKind::Create => ([]).length(),
+            TransactionKind::Create => [].length(),
         }
     }
 }
@@ -165,8 +165,8 @@ impl Encodable for TransactionKind {
 impl Decodable for TransactionKind {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         if let Some(&first) = buf.first() {
-            if first == 0x80 {
-                *buf = &buf[1..];
+            if first == EMPTY_STRING_CODE {
+                buf.advance(1);
                 Ok(TransactionKind::Create)
             } else {
                 let addr = <Address as Decodable>::decode(buf)?;

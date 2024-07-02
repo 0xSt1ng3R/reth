@@ -4,7 +4,7 @@ use crate::{
     eth::error::{EthApiError, EthResult, RpcInvalidTransactionError},
     EthApi,
 };
-use reth_node_api::EvmEnvConfig;
+use reth_evm::ConfigureEvm;
 use reth_primitives::{
     serde_helper::JsonStorageKey, Address, BlockId, BlockNumberOrTag, Bytes, B256, U256,
 };
@@ -21,18 +21,21 @@ where
         BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + EvmEnvProvider + 'static,
     Pool: TransactionPool + Clone + 'static,
     Network: Send + Sync + 'static,
-    EvmConfig: EvmEnvConfig + 'static,
+    EvmConfig: ConfigureEvm + 'static,
 {
     pub(crate) fn get_code(&self, address: Address, block_id: Option<BlockId>) -> EthResult<Bytes> {
-        let state = self.state_at_block_id_or_latest(block_id)?;
-        let code = state.account_code(address)?.unwrap_or_default();
-        Ok(code.original_bytes())
+        Ok(self
+            .state_at_block_id_or_latest(block_id)?
+            .account_code(address)?
+            .unwrap_or_default()
+            .original_bytes())
     }
 
     pub(crate) fn balance(&self, address: Address, block_id: Option<BlockId>) -> EthResult<U256> {
-        let state = self.state_at_block_id_or_latest(block_id)?;
-        let balance = state.account_balance(address)?.unwrap_or_default();
-        Ok(balance)
+        Ok(self
+            .state_at_block_id_or_latest(block_id)?
+            .account_balance(address)?
+            .unwrap_or_default())
     }
 
     /// Returns the number of transactions sent from an address at the given block identifier.
@@ -44,26 +47,12 @@ where
         address: Address,
         block_id: Option<BlockId>,
     ) -> EthResult<U256> {
-        if let Some(BlockId::Number(BlockNumberOrTag::Pending)) = block_id {
-            // lookup transactions in pool
+        if block_id == Some(BlockId::Number(BlockNumberOrTag::Pending)) {
             let address_txs = self.pool().get_transactions_by_sender(address);
-
-            if !address_txs.is_empty() {
-                // get max transaction with the highest nonce
-                let highest_nonce_tx = address_txs
-                    .into_iter()
-                    .reduce(|accum, item| {
-                        if item.transaction.nonce() > accum.transaction.nonce() {
-                            item
-                        } else {
-                            accum
-                        }
-                    })
-                    .expect("Not empty; qed");
-
-                let tx_count = highest_nonce_tx
-                    .transaction
-                    .nonce()
+            if let Some(highest_nonce) =
+                address_txs.iter().map(|item| item.transaction.nonce()).max()
+            {
+                let tx_count = highest_nonce
                     .checked_add(1)
                     .ok_or(RpcInvalidTransactionError::NonceMaxValue)?;
                 return Ok(U256::from(tx_count))
@@ -80,9 +69,12 @@ where
         index: JsonStorageKey,
         block_id: Option<BlockId>,
     ) -> EthResult<B256> {
-        let state = self.state_at_block_id_or_latest(block_id)?;
-        let value = state.storage(address, index.0)?.unwrap_or_default();
-        Ok(B256::new(value.to_be_bytes()))
+        Ok(B256::new(
+            self.state_at_block_id_or_latest(block_id)?
+                .storage(address, index.0)?
+                .unwrap_or_default()
+                .to_be_bytes(),
+        ))
     }
 
     pub(crate) async fn get_proof(
@@ -126,16 +118,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        eth::{
-            cache::EthStateCache, gas_oracle::GasPriceOracle, FeeHistoryCache,
-            FeeHistoryCacheConfig,
-        },
-        BlockingTaskPool,
+    use crate::eth::{
+        cache::EthStateCache, gas_oracle::GasPriceOracle, FeeHistoryCache, FeeHistoryCacheConfig,
     };
-    use reth_node_builder::EthEvmConfig;
+    use reth_evm_ethereum::EthEvmConfig;
     use reth_primitives::{constants::ETHEREUM_BLOCK_GAS_LIMIT, StorageKey, StorageValue};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider, NoopProvider};
+    use reth_tasks::pool::BlockingTaskPool;
     use reth_transaction_pool::test_utils::testing_pool;
     use std::collections::HashMap;
 
@@ -154,8 +143,9 @@ mod tests {
             GasPriceOracle::new(NoopProvider::default(), Default::default(), cache.clone()),
             ETHEREUM_BLOCK_GAS_LIMIT,
             BlockingTaskPool::build().expect("failed to build tracing pool"),
-            FeeHistoryCache::new(cache.clone(), FeeHistoryCacheConfig::default()),
+            FeeHistoryCache::new(cache, FeeHistoryCacheConfig::default()),
             evm_config,
+            None,
         );
         let address = Address::random();
         let storage = eth_api.storage_at(address, U256::ZERO.into(), None).unwrap();
@@ -175,11 +165,12 @@ mod tests {
             pool,
             (),
             cache.clone(),
-            GasPriceOracle::new(mock_provider.clone(), Default::default(), cache.clone()),
+            GasPriceOracle::new(mock_provider, Default::default(), cache.clone()),
             ETHEREUM_BLOCK_GAS_LIMIT,
             BlockingTaskPool::build().expect("failed to build tracing pool"),
-            FeeHistoryCache::new(cache.clone(), FeeHistoryCacheConfig::default()),
+            FeeHistoryCache::new(cache, FeeHistoryCacheConfig::default()),
             evm_config,
+            None,
         );
 
         let storage_key: U256 = storage_key.into();

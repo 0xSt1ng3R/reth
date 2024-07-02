@@ -6,10 +6,7 @@
 use alloy_rlp::Encodable;
 use reth_net_common::ban_list::BanList;
 use reth_net_nat::{NatResolver, ResolveNatInterval};
-use reth_primitives::{
-    bytes::{Bytes, BytesMut},
-    NodeRecord,
-};
+use reth_primitives::{bytes::Bytes, NodeRecord};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,13 +31,13 @@ pub struct Discv4Config {
     pub ping_interval: Duration,
     /// The duration of we consider a ping timed out.
     pub ping_expiration: Duration,
-    /// The rate at which lookups should be triggered.
+    /// The rate at which new random lookups should be triggered.
     pub lookup_interval: Duration,
     /// The duration of we consider a FindNode request timed out.
     pub request_timeout: Duration,
     /// The duration after which we consider an enr request timed out.
     pub enr_expiration: Duration,
-    /// The duration we set for neighbours responses
+    /// The duration we set for neighbours responses.
     pub neighbours_expiration: Duration,
     /// Provides a way to ban peers and ips.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -57,9 +54,9 @@ pub struct Discv4Config {
     pub enable_dht_random_walk: bool,
     /// Whether to automatically lookup peers.
     pub enable_lookup: bool,
-    /// Whether to enforce EIP-868 extension
+    /// Whether to enforce EIP-868 extension.
     pub enable_eip868: bool,
-    /// Whether to respect expiration timestamps in messages
+    /// Whether to respect expiration timestamps in messages.
     pub enforce_expiration_timestamps: bool,
     /// Additional pairs to include in The [`Enr`](enr::Enr) if EIP-868 extension is enabled <https://eips.ethereum.org/EIPS/eip-868>
     pub additional_eip868_rlp_pairs: HashMap<Vec<u8>, Bytes>,
@@ -80,9 +77,7 @@ impl Discv4Config {
 
     /// Add another key value pair to include in the ENR
     pub fn add_eip868_pair(&mut self, key: impl Into<Vec<u8>>, value: impl Encodable) -> &mut Self {
-        let mut buf = BytesMut::new();
-        value.encode(&mut buf);
-        self.add_eip868_rlp_pair(key, buf.freeze())
+        self.add_eip868_rlp_pair(key, Bytes::from(alloy_rlp::encode(&value)))
     }
 
     /// Add another key value pair to include in the ENR
@@ -237,9 +232,7 @@ impl Discv4ConfigBuilder {
 
     /// Add another key value pair to include in the ENR
     pub fn add_eip868_pair(&mut self, key: impl Into<Vec<u8>>, value: impl Encodable) -> &mut Self {
-        let mut buf = BytesMut::new();
-        value.encode(&mut buf);
-        self.add_eip868_rlp_pair(key, buf.freeze())
+        self.add_eip868_rlp_pair(key, Bytes::from(alloy_rlp::encode(&value)))
     }
 
     /// Add another key value pair to include in the ENR

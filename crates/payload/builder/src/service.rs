@@ -4,7 +4,10 @@
 //! Once a new payload is created, it is continuously updated.
 
 use crate::{
-    error::PayloadBuilderError, metrics::PayloadBuilderServiceMetrics, traits::PayloadJobGenerator,
+    error::PayloadBuilderError,
+    events::{Events, PayloadEvents},
+    metrics::PayloadBuilderServiceMetrics,
+    traits::PayloadJobGenerator,
     KeepPayloadJobAlive, PayloadJob,
 };
 use futures_util::{future::FutureExt, Stream, StreamExt};
@@ -17,12 +20,17 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{
+    broadcast, mpsc,
+    oneshot::{self, error::RecvError},
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, trace, warn};
 
+type PayloadFuture<P> = Pin<Box<dyn Future<Output = Result<P, PayloadBuilderError>> + Send + Sync>>;
+
 /// A communication channel to the [PayloadBuilderService] that can retrieve payloads.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PayloadStore<Engine: EngineTypes> {
     inner: PayloadBuilderHandle<Engine>,
 }
@@ -31,7 +39,7 @@ pub struct PayloadStore<Engine: EngineTypes> {
 
 impl<Engine> PayloadStore<Engine>
 where
-    Engine: EngineTypes,
+    Engine: EngineTypes + 'static,
 {
     /// Resolves the payload job and returns the best payload that has been built so far.
     ///
@@ -65,6 +73,15 @@ where
     }
 }
 
+impl<Engine> Clone for PayloadStore<Engine>
+where
+    Engine: EngineTypes,
+{
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
 impl<Engine> From<PayloadBuilderHandle<Engine>> for PayloadStore<Engine>
 where
     Engine: EngineTypes,
@@ -77,7 +94,7 @@ where
 /// A communication channel to the [PayloadBuilderService].
 ///
 /// This is the API used to create new payloads and to get the current state of existing ones.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PayloadBuilderHandle<Engine: EngineTypes> {
     /// Sender half of the message channel to the [PayloadBuilderService].
     to_service: mpsc::UnboundedSender<PayloadServiceCommand<Engine>>,
@@ -87,7 +104,7 @@ pub struct PayloadBuilderHandle<Engine: EngineTypes> {
 
 impl<Engine> PayloadBuilderHandle<Engine>
 where
-    Engine: EngineTypes,
+    Engine: EngineTypes + 'static,
 {
     /// Creates a new payload builder handle for the given channel.
     ///
@@ -114,7 +131,9 @@ where
     }
 
     /// Returns the best payload for the given identifier.
-    async fn best_payload(
+    ///
+    /// Note: this does not resolve the job if it's still in progress.
+    pub async fn best_payload(
         &self,
         id: PayloadId,
     ) -> Option<Result<Engine::BuiltPayload, PayloadBuilderError>> {
@@ -159,6 +178,23 @@ where
     ) -> Result<PayloadId, PayloadBuilderError> {
         self.send_new_payload(attr).await?
     }
+
+    /// Sends a message to the service to subscribe to payload events.
+    /// Returns a receiver that will receive them.
+    pub async fn subscribe(&self) -> Result<PayloadEvents<Engine>, RecvError> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.to_service.send(PayloadServiceCommand::Subscribe(tx));
+        Ok(PayloadEvents { receiver: rx.await? })
+    }
+}
+
+impl<Engine> Clone for PayloadBuilderHandle<Engine>
+where
+    Engine: EngineTypes,
+{
+    fn clone(&self) -> Self {
+        Self { to_service: self.to_service.clone() }
+    }
 }
 
 /// A service that manages payload building tasks.
@@ -189,13 +225,17 @@ where
     metrics: PayloadBuilderServiceMetrics,
     /// Chain events notification stream
     chain_events: St,
+    /// Payload events handler, used to broadcast and subscribe to payload events.
+    payload_events: broadcast::Sender<Events<Engine>>,
 }
+
+const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 // === impl PayloadBuilderService ===
 
 impl<Gen, St, Engine> PayloadBuilderService<Gen, St, Engine>
 where
-    Engine: EngineTypes,
+    Engine: EngineTypes + 'static,
     Gen: PayloadJobGenerator,
     Gen::Job: PayloadJob<PayloadAttributes = Engine::PayloadBuilderAttributes>,
     <Gen::Job as PayloadJob>::BuiltPayload: Into<Engine::BuiltPayload>,
@@ -207,6 +247,8 @@ where
     /// additional logic when new state is committed. See also [PayloadJobGenerator::on_new_state].
     pub fn new(generator: Gen, chain_events: St) -> (Self, PayloadBuilderHandle<Engine>) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
+        let (payload_events, _) = broadcast::channel(PAYLOAD_EVENTS_BUFFER_SIZE);
+
         let service = Self {
             generator,
             payload_jobs: Vec::new(),
@@ -214,6 +256,7 @@ where
             command_rx: UnboundedReceiverStream::new(command_rx),
             metrics: Default::default(),
             chain_events,
+            payload_events,
         };
 
         let handle = service.handle();
@@ -263,9 +306,13 @@ where
         // Since the fees will not be known until the payload future is resolved / awaited, we wrap
         // the future in a new future that will update the metrics.
         let resolved_metrics = self.metrics.clone();
+        let payload_events = self.payload_events.clone();
+
         let fut = async move {
             let res = fut.await;
             if let Ok(ref payload) = res {
+                payload_events.send(Events::BuiltPayload(payload.clone().into())).ok();
+
                 resolved_metrics
                     .set_resolved_revenue(payload.block().number, f64::from(payload.fees()));
             }
@@ -304,7 +351,7 @@ where
 
 impl<Gen, St, Engine> Future for PayloadBuilderService<Gen, St, Engine>
 where
-    Engine: EngineTypes,
+    Engine: EngineTypes + 'static,
     Gen: PayloadJobGenerator + Unpin + 'static,
     <Gen as PayloadJobGenerator>::Job: Unpin + 'static,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
@@ -334,7 +381,7 @@ where
                         trace!(%id, "payload job finished");
                     }
                     Poll::Ready(Err(err)) => {
-                        warn!(?err, ?id, "Payload builder job failed; resolving payload");
+                        warn!(%err, ?id, "Payload builder job failed; resolving payload");
                         this.metrics.inc_failed_jobs();
                         this.metrics.set_active_jobs(this.payload_jobs.len());
                     }
@@ -360,16 +407,17 @@ where
                         } else {
                             // no job for this payload yet, create one
                             let parent = attr.parent();
-                            match this.generator.new_payload_job(attr) {
+                            match this.generator.new_payload_job(attr.clone()) {
                                 Ok(job) => {
                                     info!(%id, %parent, "New payload job created");
                                     this.metrics.inc_initiated_jobs();
                                     new_job = true;
                                     this.payload_jobs.push((job, id));
+                                    this.payload_events.send(Events::Attributes(attr.clone())).ok();
                                 }
                                 Err(err) => {
                                     this.metrics.inc_failed_jobs();
-                                    warn!(?err, %id, "Failed to create payload builder job");
+                                    warn!(%err, %id, "Failed to create payload builder job");
                                     res = Err(err);
                                 }
                             }
@@ -382,10 +430,15 @@ where
                         let _ = tx.send(this.best_payload(id));
                     }
                     PayloadServiceCommand::PayloadAttributes(id, tx) => {
-                        let _ = tx.send(this.payload_attributes(id));
+                        let attributes = this.payload_attributes(id);
+                        let _ = tx.send(attributes);
                     }
                     PayloadServiceCommand::Resolve(id, tx) => {
                         let _ = tx.send(this.resolve(id));
+                    }
+                    PayloadServiceCommand::Subscribe(tx) => {
+                        let new_rx = this.payload_events.subscribe();
+                        let _ = tx.send(new_rx);
                     }
                 }
             }
@@ -396,9 +449,6 @@ where
         }
     }
 }
-
-// TODO: make generic over built payload type
-type PayloadFuture<P> = Pin<Box<dyn Future<Output = Result<P, PayloadBuilderError>> + Send + Sync>>;
 
 /// Message type for the [PayloadBuilderService].
 pub enum PayloadServiceCommand<Engine: EngineTypes> {
@@ -419,6 +469,8 @@ pub enum PayloadServiceCommand<Engine: EngineTypes> {
     ),
     /// Resolve the payload and return the payload
     Resolve(PayloadId, oneshot::Sender<Option<PayloadFuture<Engine::BuiltPayload>>>),
+    /// Payload service events
+    Subscribe(oneshot::Sender<broadcast::Receiver<Events<Engine>>>),
 }
 
 impl<Engine> fmt::Debug for PayloadServiceCommand<Engine>
@@ -437,6 +489,7 @@ where
                 f.debug_tuple("PayloadAttributes").field(&f0).field(&f1).finish()
             }
             PayloadServiceCommand::Resolve(f0, _f1) => f.debug_tuple("Resolve").field(&f0).finish(),
+            PayloadServiceCommand::Subscribe(f0) => f.debug_tuple("Subscribe").field(&f0).finish(),
         }
     }
 }

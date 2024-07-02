@@ -58,6 +58,11 @@ Database:
           - trace:   Enables logging for trace debug-level messages
           - extra:   Enables logging for extra debug-level messages
 
+      --db.exclusive <EXCLUSIVE>
+          Open environment in exclusive/monopolistic mode. Makes it possible to open a database on an NFS volume
+          
+          [possible values: true, false]
+
   <IMPORT_PATH>
           The path to a block file for import.
           
@@ -78,7 +83,7 @@ Logging:
       --log.stdout.filter <FILTER>
           The filter to use for logs written to stdout
           
-          [default: info]
+          [default: ]
 
       --log.file.format <FORMAT>
           The format to use for logs written to the log file

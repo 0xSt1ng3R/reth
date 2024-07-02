@@ -5,20 +5,39 @@
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
     issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
 )]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-/// Exports commonly used concrete instances of the [EngineTypes](reth_node_api::EngineTypes)
-/// trait.
-pub mod engine;
-pub use engine::EthEngineTypes;
+/// Node event hooks.
+pub mod hooks;
 
-/// Exports commonly used concrete instances of the [EvmEnvConfig](reth_node_api::EvmEnvConfig)
-/// trait.
-pub mod evm;
-pub use evm::EthEvmConfig;
+/// Support for configuring the higher level node types.
+pub mod node;
+pub use node::*;
 
-/// Exports optimism-specific types that implement traits in [reth_node_api].
-#[cfg(feature = "optimism")]
-pub mod optimism;
-#[cfg(feature = "optimism")]
-pub use optimism::{OptimismEngineTypes, OptimismEvmConfig};
+/// Support for configuring the components of a node.
+pub mod components;
+
+mod builder;
+pub use builder::*;
+
+mod handle;
+pub use handle::NodeHandle;
+
+pub mod rpc;
+
+/// Support for installing the ExExs (execution extensions) in a node.
+pub mod exex;
+
+/// Re-export the core configuration traits.
+pub use reth_node_core::cli::config::{
+    PayloadBuilderConfig, RethNetworkConfig, RethRpcConfig, RethTransactionPoolConfig,
+};
+
+// re-export the core config for convenience
+pub use reth_node_core::node_config::NodeConfig;
+
+// re-export API types for convenience
+pub use reth_node_api::*;
+
+use aquamarine as _;

@@ -26,15 +26,12 @@ pub mod hashed_cursor;
 /// The trie walker for iterating over the trie nodes.
 pub mod walker;
 
-mod errors;
-pub use errors::*;
-
-// The iterators for traversing existing intermediate hashes and updated trie leaves.
-pub(crate) mod node_iter;
+/// The iterators for traversing existing intermediate hashes and updated trie leaves.
+pub mod node_iter;
 
 /// In-memory hashed state.
 mod state;
-pub use state::{HashedPostState, HashedStorage};
+pub use state::*;
 
 /// Merkle proof generation.
 pub mod proof;
@@ -49,6 +46,13 @@ pub mod updates;
 /// Utilities for state root checkpoint progress.
 mod progress;
 pub use progress::{IntermediateStateRootState, StateRootProgress};
+
+/// Trie calculation stats.
+pub mod stats;
+
+/// Trie calculation metrics.
+#[cfg(feature = "metrics")]
+pub mod metrics;
 
 /// Collection of trie-related test utilities.
 #[cfg(any(test, feature = "test-utils"))]

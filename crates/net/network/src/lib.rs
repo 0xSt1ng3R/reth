@@ -84,12 +84,13 @@
 //!
 //!     let config =
 //!         NetworkConfig::builder(local_key).boot_nodes(mainnet_nodes()).build(client.clone());
+//!     let transactions_manager_config = config.transactions_manager_config.clone();
 //!
 //!     // create the network instance
 //!     let (handle, network, transactions, request_handler) = NetworkManager::builder(config)
 //!         .await
 //!         .unwrap()
-//!         .transactions(pool)
+//!         .transactions(pool, transactions_manager_config)
 //!         .request_handler(client)
 //!         .split_with_handle();
 //! }
@@ -113,6 +114,7 @@
 /// Common helpers for network testing.
 pub mod test_utils;
 
+mod budget;
 mod builder;
 mod cache;
 pub mod config;
@@ -147,5 +149,6 @@ pub use session::{
     PendingSessionHandle, PendingSessionHandshakeError, SessionCommand, SessionEvent, SessionId,
     SessionLimits, SessionManager, SessionsConfig,
 };
+pub use transactions::{FilterAnnouncement, MessageFilter, ValidateTx68};
 
 pub use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols};

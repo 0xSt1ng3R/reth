@@ -733,7 +733,6 @@ mod u256_numeric_string {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
     use std::str::FromStr;
 
     #[test]

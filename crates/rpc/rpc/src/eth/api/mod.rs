@@ -13,32 +13,33 @@ use crate::eth::{
 };
 
 use async_trait::async_trait;
+use reth_evm::ConfigureEvm;
 use reth_interfaces::RethResult;
 use reth_network_api::NetworkInfo;
-use reth_node_api::EvmEnvConfig;
 use reth_primitives::{
-    revm_primitives::{BlockEnv, CfgEnv},
-    Address, BlockId, BlockNumberOrTag, ChainInfo, SealedBlockWithSenders, B256, U256, U64,
+    revm_primitives::{BlockEnv, CfgEnvWithHandlerCfg},
+    Address, BlockId, BlockNumberOrTag, ChainInfo, SealedBlockWithSenders, SealedHeader, B256,
+    U256, U64,
 };
-
 use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider, StateProviderBox, StateProviderFactory,
 };
 use reth_rpc_types::{SyncInfo, SyncStatus};
-use reth_tasks::{TaskSpawner, TokioTaskExecutor};
+use reth_tasks::{pool::BlockingTaskPool, TaskSpawner, TokioTaskExecutor};
 use reth_transaction_pool::TransactionPool;
+use revm_primitives::{CfgEnv, SpecId};
 use std::{
     fmt::Debug,
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
 };
-
 use tokio::sync::{oneshot, Mutex};
 
 mod block;
 mod call;
 pub(crate) mod fee_history;
+
 mod fees;
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -48,7 +49,7 @@ mod sign;
 mod state;
 mod transactions;
 
-use crate::BlockingTaskPool;
+use crate::eth::traits::RawTransactionForwarder;
 pub use transactions::{EthTransactions, TransactionSource};
 
 /// `Eth` API trait.
@@ -104,6 +105,7 @@ where
         blocking_task_pool: BlockingTaskPool,
         fee_history_cache: FeeHistoryCache,
         evm_config: EvmConfig,
+        raw_transaction_forwarder: Option<Arc<dyn RawTransactionForwarder>>,
     ) -> Self {
         Self::with_spawner(
             provider,
@@ -116,6 +118,7 @@ where
             blocking_task_pool,
             fee_history_cache,
             evm_config,
+            raw_transaction_forwarder,
         )
     }
 
@@ -132,6 +135,7 @@ where
         blocking_task_pool: BlockingTaskPool,
         fee_history_cache: FeeHistoryCache,
         evm_config: EvmConfig,
+        raw_transaction_forwarder: Option<Arc<dyn RawTransactionForwarder>>,
     ) -> Self {
         // get the block number of the latest block
         let latest_block = provider
@@ -145,7 +149,7 @@ where
             provider,
             pool,
             network,
-            signers: Default::default(),
+            signers: parking_lot::RwLock::new(Default::default()),
             eth_cache,
             gas_oracle,
             gas_cap,
@@ -155,8 +159,7 @@ where
             blocking_task_pool,
             fee_history_cache,
             evm_config,
-            #[cfg(feature = "optimism")]
-            http_client: reqwest::Client::builder().use_rustls_tls().build().unwrap(),
+            raw_transaction_forwarder,
         };
 
         Self { inner: Arc::new(inner) }
@@ -166,6 +169,8 @@ where
     ///
     /// This accepts a closure that creates a new future using a clone of this type and spawns the
     /// future onto a new task that is allowed to block.
+    ///
+    /// Note: This is expected for futures that are dominated by blocking IO operations.
     pub(crate) async fn on_blocking_task<C, F, R>(&self, c: C) -> EthResult<R>
     where
         C: FnOnce(Self) -> F,
@@ -263,38 +268,43 @@ where
         BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + EvmEnvProvider + 'static,
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Send + Sync + 'static,
-    EvmConfig: EvmEnvConfig + Clone + 'static,
+    EvmConfig: ConfigureEvm + Clone + 'static,
 {
-    /// Configures the [CfgEnv] and [BlockEnv] for the pending block
+    /// Configures the [CfgEnvWithHandlerCfg] and [BlockEnv] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
     pub(crate) fn pending_block_env_and_cfg(&self) -> EthResult<PendingBlockEnv> {
-        let origin = if let Some(pending) = self.provider().pending_block_with_senders()? {
+        let origin: PendingBlockEnvOrigin = if let Some(pending) =
+            self.provider().pending_block_with_senders()?
+        {
             PendingBlockEnvOrigin::ActualPending(pending)
         } else {
             // no pending block from the CL yet, so we use the latest block and modify the env
             // values that we can
-            let mut latest =
+            let latest =
                 self.provider().latest_header()?.ok_or_else(|| EthApiError::UnknownBlockNumber)?;
 
+            let (mut latest_header, block_hash) = latest.split();
             // child block
-            latest.number += 1;
-            // assumed child block is in the next slot
-            latest.timestamp += 12;
+            latest_header.number += 1;
+            // assumed child block is in the next slot: 12s
+            latest_header.timestamp += 12;
             // base fee of the child block
             let chain_spec = self.provider().chain_spec();
-            latest.base_fee_per_gas =
-                latest.next_block_base_fee(chain_spec.base_fee_params(latest.timestamp));
+
+            latest_header.base_fee_per_gas = latest_header
+                .next_block_base_fee(chain_spec.base_fee_params(latest_header.timestamp));
+
+            // update excess blob gas consumed above target
+            latest_header.excess_blob_gas = latest_header.next_block_excess_blob_gas();
+
+            // we're reusing the same block hash because we need this to lookup the block's state
+            let latest = SealedHeader::new(latest_header, block_hash);
 
             PendingBlockEnvOrigin::DerivedFromLatest(latest)
         };
 
-        let mut cfg = CfgEnv::default();
-
-        #[cfg(feature = "optimism")]
-        {
-            cfg.optimism = self.provider().chain_spec().is_optimism();
-        }
+        let mut cfg = CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), SpecId::LATEST);
 
         let mut block_env = BlockEnv::default();
         // Note: for the PENDING block we assume it is past the known merge block and thus this will
@@ -325,16 +335,11 @@ where
             if let Some(pending_block) = lock.as_ref() {
                 // this is guaranteed to be the `latest` header
                 if pending.block_env.number.to::<u64>() == pending_block.block.number &&
-                    pending.origin.header().hash == pending_block.block.parent_hash &&
+                    pending.origin.header().hash() == pending_block.block.parent_hash &&
                     now <= pending_block.expires_at
                 {
                     return Ok(Some(pending_block.block.clone()))
                 }
-            }
-
-            // if we're currently syncing, we're unable to build a pending block
-            if this.network().is_syncing() {
-                return Ok(None)
             }
 
             // we rebuild the block
@@ -379,7 +384,7 @@ where
     Provider:
         BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + EvmEnvProvider + 'static,
     Network: NetworkInfo + 'static,
-    EvmConfig: EvmEnvConfig + 'static,
+    EvmConfig: ConfigureEvm + 'static,
 {
     /// Returns the current ethereum protocol version.
     ///
@@ -400,7 +405,7 @@ where
     }
 
     fn accounts(&self) -> Vec<Address> {
-        self.inner.signers.iter().flat_map(|s| s.accounts()).collect()
+        self.inner.signers.read().iter().flat_map(|s| s.accounts()).collect()
     }
 
     fn is_syncing(&self) -> bool {
@@ -465,7 +470,7 @@ struct EthApiInner<Provider, Pool, Network, EvmConfig> {
     /// An interface to interact with the network
     network: Network,
     /// All configured Signers
-    signers: Vec<Box<dyn EthSigner>>,
+    signers: parking_lot::RwLock<Vec<Box<dyn EthSigner>>>,
     /// The async cache frontend for eth related data
     eth_cache: EthStateCache,
     /// The async gas oracle frontend for gas price suggestions
@@ -484,7 +489,6 @@ struct EthApiInner<Provider, Pool, Network, EvmConfig> {
     fee_history_cache: FeeHistoryCache,
     /// The type that defines how to configure the EVM
     evm_config: EvmConfig,
-    /// An http client for communicating with sequencers.
-    #[cfg(feature = "optimism")]
-    http_client: reqwest::Client,
+    /// Allows forwarding received raw transactions
+    raw_transaction_forwarder: Option<Arc<dyn RawTransactionForwarder>>,
 }

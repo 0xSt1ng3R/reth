@@ -133,7 +133,7 @@ where
         let mut inner = self.inner.lock().await;
 
         // if we have stored a last price, then we check whether or not it was for the same head
-        if inner.last_price.block_hash == header.hash {
+        if inner.last_price.block_hash == header.hash() {
             return Ok(inner.last_price.price)
         }
 
@@ -142,7 +142,7 @@ where
         //
         // we only return more than check_block blocks' worth of prices if one or more return empty
         // transactions
-        let mut current_hash = header.hash;
+        let mut current_hash = header.hash();
         let mut results = Vec::new();
         let mut populated_blocks = 0;
 
@@ -186,13 +186,14 @@ where
         }
 
         // sort results then take the configured percentile result
-        let mut price = inner.last_price.price;
-        if !results.is_empty() {
+        let mut price = if !results.is_empty() {
             results.sort_unstable();
-            price = *results
-                .get((results.len() - 1) * self.oracle_config.percentile as usize / 100)
-                .expect("gas price index is a percent of nonzero array length, so a value always exists; qed");
-        }
+            *results.get((results.len() - 1) * self.oracle_config.percentile as usize / 100).expect(
+                "gas price index is a percent of nonzero array length, so a value always exists",
+            )
+        } else {
+            inner.last_price.price
+        };
 
         // constrain to the max price
         if let Some(max_price) = self.oracle_config.max_price {
@@ -201,7 +202,7 @@ where
             }
         }
 
-        inner.last_price = GasPriceOracleResult { block_hash: header.hash, price };
+        inner.last_price = GasPriceOracleResult { block_hash: header.hash(), price };
 
         Ok(price)
     }
@@ -305,8 +306,6 @@ impl Default for GasPriceOracleResult {
 
 #[cfg(test)]
 mod tests {
-    use reth_primitives::constants::GWEI_TO_WEI;
-
     use super::*;
 
     #[test]

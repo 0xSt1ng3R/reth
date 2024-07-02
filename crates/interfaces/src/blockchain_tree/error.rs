@@ -4,6 +4,7 @@ use crate::{
     consensus::ConsensusError,
     executor::{BlockExecutionError, BlockValidationError},
     provider::ProviderError,
+    RethError,
 };
 use reth_primitives::{BlockHash, BlockNumber, SealedBlock};
 
@@ -48,9 +49,6 @@ pub enum BlockchainTreeError {
     },
 }
 
-/// Result alias for `CanonicalError`
-pub type CanonicalResult<T> = Result<T, CanonicalError>;
-
 /// Canonical Errors
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum CanonicalError {
@@ -60,6 +58,9 @@ pub enum CanonicalError {
     /// Error originating from blockchain tree operations.
     #[error(transparent)]
     BlockchainTree(#[from] BlockchainTreeError),
+    /// Error originating from a provider operation.
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
     /// Error indicating a transaction reverted during execution.
     #[error("transaction error on revert: {0}")]
     CanonicalRevert(String),
@@ -110,6 +111,11 @@ impl InsertBlockError {
         Self::new(block, InsertBlockErrorKind::Execution(error))
     }
 
+    /// Create a new InsertBlockError from a RethError and block.
+    pub fn from_reth_error(error: RethError, block: SealedBlock) -> Self {
+        Self::new(block, error.into())
+    }
+
     /// Consumes the error and returns the block that resulted in the error
     #[inline]
     pub fn into_block(self) -> SealedBlock {
@@ -151,8 +157,11 @@ impl std::fmt::Display for InsertBlockErrorData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Failed to insert block (hash={:?}, number={}, parent_hash={:?}): {}",
-            self.block.hash, self.block.number, self.block.parent_hash, self.kind
+            "Failed to insert block (hash={}, number={}, parent_hash={}): {}",
+            self.block.hash(),
+            self.block.number,
+            self.block.parent_hash,
+            self.kind
         )
     }
 }
@@ -161,7 +170,7 @@ impl std::fmt::Debug for InsertBlockErrorData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InsertBlockError")
             .field("error", &self.kind)
-            .field("hash", &self.block.hash)
+            .field("hash", &self.block.hash())
             .field("number", &self.block.number)
             .field("parent_hash", &self.block.parent_hash)
             .field("num_txs", &self.block.body.len())
@@ -239,7 +248,7 @@ impl InsertBlockErrorKind {
                         true
                     }
                     // these are internal errors, not caused by an invalid block
-                    BlockExecutionError::ProviderError |
+                    BlockExecutionError::LatestBlock(_) |
                     BlockExecutionError::Pruning(_) |
                     BlockExecutionError::CanonicalRevert { .. } |
                     BlockExecutionError::CanonicalCommit { .. } |
@@ -271,6 +280,7 @@ impl InsertBlockErrorKind {
                 CanonicalError::CanonicalCommit(_) |
                 CanonicalError::CanonicalRevert(_) => false,
                 CanonicalError::Validation(_) => true,
+                CanonicalError::Provider(_) => false,
             },
             InsertBlockErrorKind::BlockchainTree(_) => false,
         }
@@ -321,11 +331,9 @@ impl InsertBlockErrorKind {
     }
 }
 
-// This is a convenience impl to convert from crate::Error to InsertBlockErrorKind, most
-impl From<crate::RethError> for InsertBlockErrorKind {
-    fn from(err: crate::RethError) -> Self {
-        use crate::RethError;
-
+// This is a convenience impl to convert from crate::Error to InsertBlockErrorKind
+impl From<RethError> for InsertBlockErrorKind {
+    fn from(err: RethError) -> Self {
         match err {
             RethError::Execution(err) => InsertBlockErrorKind::Execution(err),
             RethError::Consensus(err) => InsertBlockErrorKind::Consensus(err),

@@ -3,7 +3,7 @@
 use crate::transaction::from_recovered_with_block_context;
 use alloy_rlp::Encodable;
 use reth_primitives::{
-    Block as PrimitiveBlock, BlockWithSenders, Header as PrimitiveHeader, B256, U256, U64,
+    Block as PrimitiveBlock, BlockWithSenders, Header as PrimitiveHeader, B256, U256,
 };
 use reth_rpc_types::{Block, BlockError, BlockTransactions, BlockTransactionsKind, Header};
 
@@ -76,7 +76,7 @@ pub fn from_block_full(
                 block_hash,
                 block_number,
                 base_fee_per_gas,
-                U256::from(idx),
+                idx,
             )
         })
         .collect::<Vec<_>>();
@@ -91,33 +91,32 @@ pub fn from_block_full(
 }
 
 /// Converts from a [reth_primitives::SealedHeader] to a [reth_rpc_types::BlockNumberOrTag]
+///
+/// Note: This does not set the `totalDifficulty` field.
 pub fn from_primitive_with_hash(primitive_header: reth_primitives::SealedHeader) -> Header {
-    let reth_primitives::SealedHeader {
-        header:
-            PrimitiveHeader {
-                parent_hash,
-                ommers_hash,
-                beneficiary,
-                state_root,
-                transactions_root,
-                receipts_root,
-                logs_bloom,
-                difficulty,
-                number,
-                gas_limit,
-                gas_used,
-                timestamp,
-                mix_hash,
-                nonce,
-                base_fee_per_gas,
-                extra_data,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-            },
-        hash,
-    } = primitive_header;
+    let (header, hash) = primitive_header.split();
+    let PrimitiveHeader {
+        parent_hash,
+        ommers_hash,
+        beneficiary,
+        state_root,
+        transactions_root,
+        receipts_root,
+        logs_bloom,
+        difficulty,
+        number,
+        gas_limit,
+        gas_used,
+        timestamp,
+        mix_hash,
+        nonce,
+        base_fee_per_gas,
+        extra_data,
+        withdrawals_root,
+        blob_gas_used,
+        excess_blob_gas,
+        parent_beacon_block_root,
+    } = header;
 
     Header {
         hash: Some(hash),
@@ -128,19 +127,20 @@ pub fn from_primitive_with_hash(primitive_header: reth_primitives::SealedHeader)
         transactions_root,
         receipts_root,
         withdrawals_root,
-        number: Some(U256::from(number)),
-        gas_used: U256::from(gas_used),
-        gas_limit: U256::from(gas_limit),
+        number: Some(number),
+        gas_used: gas_used as u128,
+        gas_limit: gas_limit as u128,
         extra_data,
         logs_bloom,
-        timestamp: U256::from(timestamp),
+        timestamp,
         difficulty,
         mix_hash: Some(mix_hash),
         nonce: Some(nonce.to_be_bytes().into()),
-        base_fee_per_gas: base_fee_per_gas.map(U256::from),
-        blob_gas_used: blob_gas_used.map(U64::from),
-        excess_blob_gas: excess_blob_gas.map(U64::from),
+        base_fee_per_gas: base_fee_per_gas.map(u128::from),
+        blob_gas_used: blob_gas_used.map(u128::from),
+        excess_blob_gas: excess_blob_gas.map(u128::from),
         parent_beacon_block_root,
+        total_difficulty: None,
     }
 }
 
@@ -164,7 +164,9 @@ fn from_block_with_transactions(
     transactions: BlockTransactions,
 ) -> Block {
     let uncles = block.ommers.into_iter().map(|h| h.hash_slow()).collect();
-    let header = from_primitive_with_hash(block.header.seal(block_hash));
+    let mut header = from_primitive_with_hash(block.header.seal(block_hash));
+    header.total_difficulty = Some(total_difficulty);
+
     let withdrawals = if header.withdrawals_root.is_some() {
         block
             .withdrawals
@@ -172,11 +174,11 @@ fn from_block_with_transactions(
     } else {
         None
     };
+
     Block {
         header,
         uncles,
         transactions,
-        total_difficulty: Some(total_difficulty),
         size: Some(U256::from(block_length)),
         withdrawals,
         other: Default::default(),
@@ -196,7 +198,6 @@ pub fn uncle_block_from_header(header: PrimitiveHeader) -> Block {
         transactions: BlockTransactions::Uncle,
         withdrawals: Some(vec![]),
         size,
-        total_difficulty: None,
         other: Default::default(),
     }
 }

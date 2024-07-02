@@ -1,5 +1,4 @@
 use crate::{
-    bundle_state::BundleStateWithReceipts,
     traits::{BlockSource, ReceiptProvider},
     AccountReader, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
     BundleStateDataProvider, ChainSpecProvider, ChangeSetReader, EvmEnvProvider, HeaderProvider,
@@ -8,16 +7,20 @@ use crate::{
 };
 use parking_lot::Mutex;
 use reth_db::models::{AccountBeforeTx, StoredBlockBodyIndices};
+use reth_evm::ConfigureEvmEnv;
 use reth_interfaces::provider::{ProviderError, ProviderResult};
-use reth_node_api::EvmEnvConfig;
 use reth_primitives::{
     keccak256, trie::AccountProof, Account, Address, Block, BlockHash, BlockHashOrNumber, BlockId,
     BlockNumber, BlockWithSenders, Bytecode, Bytes, ChainInfo, ChainSpec, Header, Receipt,
     SealedBlock, SealedBlockWithSenders, SealedHeader, StorageKey, StorageValue, TransactionMeta,
-    TransactionSigned, TransactionSignedNoHash, TxHash, TxNumber, B256, U256,
+    TransactionSigned, TransactionSignedNoHash, TxHash, TxNumber, Withdrawal, Withdrawals, B256,
+    U256,
 };
 use reth_trie::updates::TrieUpdates;
-use revm::primitives::{BlockEnv, CfgEnv};
+use revm::{
+    db::BundleState,
+    primitives::{BlockEnv, CfgEnvWithHandlerCfg},
+};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::{RangeBounds, RangeInclusive},
@@ -244,6 +247,7 @@ impl TransactionsProvider for MockEthProvider {
                         block_number: block.header.number,
                         base_fee: block.header.base_fee_per_gas,
                         excess_blob_gas: block.header.excess_blob_gas,
+                        timestamp: block.header.timestamp,
                     };
                     return Ok(Some((tx.clone(), meta)))
                 }
@@ -515,13 +519,13 @@ impl AccountReader for MockEthProvider {
 }
 
 impl StateRootProvider for MockEthProvider {
-    fn state_root(&self, _bundle_state: &BundleStateWithReceipts) -> ProviderResult<B256> {
+    fn state_root(&self, _bundle_state: &BundleState) -> ProviderResult<B256> {
         Ok(B256::default())
     }
 
     fn state_root_with_updates(
         &self,
-        _bundle_state: &BundleStateWithReceipts,
+        _bundle_state: &BundleState,
     ) -> ProviderResult<(B256, TrieUpdates)> {
         Ok((B256::default(), Default::default()))
     }
@@ -557,26 +561,26 @@ impl StateProvider for MockEthProvider {
 impl EvmEnvProvider for MockEthProvider {
     fn fill_env_at<EvmConfig>(
         &self,
-        _cfg: &mut CfgEnv,
+        _cfg: &mut CfgEnvWithHandlerCfg,
         _block_env: &mut BlockEnv,
         _at: BlockHashOrNumber,
         _evm_config: EvmConfig,
     ) -> ProviderResult<()>
     where
-        EvmConfig: EvmEnvConfig,
+        EvmConfig: ConfigureEvmEnv,
     {
         Ok(())
     }
 
     fn fill_env_with_header<EvmConfig>(
         &self,
-        _cfg: &mut CfgEnv,
+        _cfg: &mut CfgEnvWithHandlerCfg,
         _block_env: &mut BlockEnv,
         _header: &Header,
         _evm_config: EvmConfig,
     ) -> ProviderResult<()>
     where
-        EvmConfig: EvmEnvConfig,
+        EvmConfig: ConfigureEvmEnv,
     {
         Ok(())
     }
@@ -599,24 +603,24 @@ impl EvmEnvProvider for MockEthProvider {
 
     fn fill_cfg_env_at<EvmConfig>(
         &self,
-        _cfg: &mut CfgEnv,
+        _cfg: &mut CfgEnvWithHandlerCfg,
         _at: BlockHashOrNumber,
         _evm_config: EvmConfig,
     ) -> ProviderResult<()>
     where
-        EvmConfig: EvmEnvConfig,
+        EvmConfig: ConfigureEvmEnv,
     {
         Ok(())
     }
 
     fn fill_cfg_env_with_header<EvmConfig>(
         &self,
-        _cfg: &mut CfgEnv,
+        _cfg: &mut CfgEnvWithHandlerCfg,
         _header: &Header,
         _evm_config: EvmConfig,
     ) -> ProviderResult<()>
     where
-        EvmConfig: EvmEnvConfig,
+        EvmConfig: ConfigureEvmEnv,
     {
         Ok(())
     }
@@ -655,48 +659,15 @@ impl StateProviderFactory for MockEthProvider {
     }
 }
 
-impl StateProviderFactory for Arc<MockEthProvider> {
-    fn latest(&self) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn history_by_block_number(&self, _block: BlockNumber) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn history_by_block_hash(&self, _block: BlockHash) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn state_by_block_hash(&self, _block: BlockHash) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn pending(&self) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-
-    fn pending_state_by_hash(&self, _block_hash: B256) -> ProviderResult<Option<StateProviderBox>> {
-        Ok(Some(Box::new(self.clone())))
-    }
-
-    fn pending_with_provider<'a>(
-        &'a self,
-        _bundle_state_data: Box<dyn BundleStateDataProvider + 'a>,
-    ) -> ProviderResult<StateProviderBox> {
-        Ok(Box::new(self.clone()))
-    }
-}
-
 impl WithdrawalsProvider for MockEthProvider {
-    fn latest_withdrawal(&self) -> ProviderResult<Option<reth_primitives::Withdrawal>> {
-        Ok(None)
-    }
     fn withdrawals_by_block(
         &self,
         _id: BlockHashOrNumber,
         _timestamp: u64,
-    ) -> ProviderResult<Option<Vec<reth_primitives::Withdrawal>>> {
+    ) -> ProviderResult<Option<Withdrawals>> {
+        Ok(None)
+    }
+    fn latest_withdrawal(&self) -> ProviderResult<Option<Withdrawal>> {
         Ok(None)
     }
 }
